@@ -1,0 +1,58 @@
+# ============================================================
+# BCDA — Multimodal Emotion Recognition
+# ============================================================
+
+# === Data & Models ===
+data/
+checkpoints/*.pt
+checkpoints/*.pth
+checkpoints/*.ckpt
+*.h5
+*.onnx
+*.safetensors
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Environment ===
+.env
+.env.*
+venv/
+.venv/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+.gemini/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Logs ===
+logs/
+*.log
+
+# === Tool-specific (EDS) ===
+tools/emotion-data-studio/data/
+tools/emotion-data-studio/dist/
+tools/emotion-data-studio/logs/
+tools/emotion-data-studio/build/pyinstaller_work/
+tools/emotion-data-studio/installer/output/
+tools/emotion-data-studio/*.exe
+
+# === Temporary ===
+*.tmp
+*.bak

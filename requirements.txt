@@ -1,0 +1,38 @@
+# ============================================================
+# BCDA — Multimodal Emotion Recognition (Main Project)
+# ============================================================
+# Đây là requirements cho phần TRAIN MODEL chính.
+# Tool hỗ trợ (Emotion Data Studio) có requirements riêng
+# tại: tools/emotion-data-studio/requirements.txt
+# ============================================================
+
+# === Deep Learning Core ===
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+
+# === NLP & Transformers ===
+transformers>=4.36.0
+underthesea>=6.8.0              # Vietnamese NLP toolkit
+
+# === Audio Processing ===
+librosa>=0.10.1
+soundfile>=0.12.1
+
+# === Computer Vision ===
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# === Data & Utilities ===
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+tqdm>=4.65.0
+
+# === Logging & Experiment Tracking ===
+tensorboard>=2.14.0
+
+# === Testing ===
+pytest>=7.4.0
