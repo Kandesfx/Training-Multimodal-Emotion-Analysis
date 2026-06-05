@@ -16,6 +16,15 @@ class Phase1RuntimeConfig:
     google_drive_root: Path = DEFAULT_GOOGLE_DRIVE_ROOT
     colab_repo_root: Path = DEFAULT_COLAB_REPO_ROOT
     use_drive_outputs_on_colab: bool = True
+    use_gcs: bool = False
+    gcs_bucket: str = "eds-data-bucket"
+
+
+@dataclass
+class Phase1WandbConfig:
+    enable: bool = False
+    project: str = "bcda-phase1"
+    entity: str | None = None
 
 
 @dataclass
@@ -97,6 +106,7 @@ class Phase1Config:
     model: Phase1ModelConfig = field(default_factory=Phase1ModelConfig)
     training: Phase1TrainingConfig = field(default_factory=Phase1TrainingConfig)
     data: Phase1DataConfig = field(default_factory=Phase1DataConfig)
+    wandb: Phase1WandbConfig = field(default_factory=Phase1WandbConfig)
 
     def apply_profile(self, profile: str, drive_root: str | Path | None = None, repo_root: str | Path | None = None) -> None:
         normalized = profile.lower().strip()
@@ -129,16 +139,23 @@ class Phase1Config:
             repo = self.runtime.colab_repo_root
             drive = self.runtime.google_drive_root
             self.paths.project_root = repo
-            self.paths.data_root = drive / "data"
-            self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
-            if self.runtime.use_drive_outputs_on_colab:
-                self.paths.checkpoints_dir = drive / "checkpoints" / "phase1"
-                self.paths.logs_dir = drive / "logs" / "phase1"
-                self.paths.outputs_dir = drive / "outputs" / "phase1"
+            if self.runtime.use_gcs:
+                self.paths.data_root = Path("/content/data")
+                self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+                self.paths.checkpoints_dir = Path("/content/checkpoints/phase1")
+                self.paths.logs_dir = Path("/content/logs/phase1")
+                self.paths.outputs_dir = Path("/content/outputs/phase1")
             else:
-                self.paths.checkpoints_dir = repo / "checkpoints" / "phase1"
-                self.paths.logs_dir = repo / "logs" / "phase1"
-                self.paths.outputs_dir = repo / "outputs" / "phase1"
+                self.paths.data_root = drive / "data"
+                self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+                if self.runtime.use_drive_outputs_on_colab:
+                    self.paths.checkpoints_dir = drive / "checkpoints" / "phase1"
+                    self.paths.logs_dir = drive / "logs" / "phase1"
+                    self.paths.outputs_dir = drive / "outputs" / "phase1"
+                else:
+                    self.paths.checkpoints_dir = repo / "checkpoints" / "phase1"
+                    self.paths.logs_dir = repo / "logs" / "phase1"
+                    self.paths.outputs_dir = repo / "outputs" / "phase1"
             return
 
         raise ValueError(f"Unsupported profile: {profile}")

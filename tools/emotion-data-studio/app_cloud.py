@@ -34,11 +34,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("EDS-Cloud")
 
+from backend.config import settings
+
 # Create FastAPI app
 app = FastAPI(
     title="Emotion Data Studio API",
     description="Cloud API for data synchronization and team collaboration",
-    version="1.0.0",
+    version=settings.VERSION,
 )
 
 # CORS
@@ -63,7 +65,7 @@ logger.info("Database initialized")
 @app.get("/health")
 async def health():
     """Health check endpoint for Cloud Run"""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": settings.VERSION}
 
 
 @app.get("/api/status")

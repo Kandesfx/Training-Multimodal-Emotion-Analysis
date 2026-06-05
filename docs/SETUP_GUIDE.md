@@ -113,7 +113,30 @@ tools/emotion-data-studio/bin/
 └── ffprobe.exe
 ```
 
-### Bước 6: Kiểm tra cài đặt
+### Bước 6: Cài đặt `aria2c` và `Deno` (khuyến nghị cho tải URL)
+
+Hai công cụ này **không bắt buộc để app mở lên**, nhưng rất nên có nếu bạn dùng tính năng tải video từ URL:
+
+- `aria2c`: tăng tốc tải fragment
+- `Deno`: giúp ổn định hơn với một số thay đổi player/signature từ YouTube
+
+**Cách 1: Winget**
+```bash
+winget install aria2.aria2
+winget install DenoLand.Deno
+```
+
+**Cách 2: Đặt trong project để tiện build/portable**
+```
+tools/emotion-data-studio/bin/
+├── aria2c.exe
+├── deno.exe
+└── denort.exe
+```
+
+> Khi các file nằm trong `tools/emotion-data-studio/bin/`, app và installer hiện đã có thể ưu tiên nhận chúng từ thư mục `bin`.
+
+### Bước 7: Kiểm tra cài đặt
 
 ```bash
 cd tools/emotion-data-studio
@@ -277,6 +300,21 @@ tools/emotion-data-studio/
 
 ### Tạo installer
 
+**Chuẩn bị trước khi build installer**
+
+Nếu bạn muốn bản cài đặt mang sẵn các công cụ hỗ trợ tải URL, hãy đặt các file sau vào thư mục:
+
+```text
+tools/emotion-data-studio/bin/
+├── ffmpeg.exe
+├── ffprobe.exe
+├── aria2c.exe
+├── deno.exe
+└── denort.exe
+```
+
+Hiện installer đã được cấu hình để **bundle tự động** các file này nếu chúng tồn tại. Nếu thiếu file nào, build vẫn tiếp tục nhờ `skipifsourcedoesntexist`.
+
 **Cách 1: Qua build script** (đã bao gồm)
 ```powershell
 .\build\build.ps1 -Version "1.0.0"    # Tự động gọi Inno Setup ở step 5
@@ -298,10 +336,11 @@ installer/output/
 ### Installer thực hiện gì
 
 1. Copy app bundle vào `%ProgramFiles%\Emotion Data Studio\`
-2. Tạo thư mục data với quyền write
-3. Đặt biến môi trường: `EDS_DATA_DIR`, `EDS_FFMPEG_PATH`
-4. Tạo shortcut Desktop + Start Menu
-5. Đăng ký registry (version, install path)
+2. Copy các binary trong `bin/` nếu có, gồm `ffmpeg`, `ffprobe`, `aria2c`, `deno`, `denort`
+3. Tạo thư mục data với quyền write
+4. App sẽ ưu tiên `{app}\bin` khi tìm external tools ở runtime
+5. Tạo shortcut Desktop + Start Menu
+6. Đăng ký registry (version, install path)
 
 ---
 
@@ -440,22 +479,52 @@ curl https://your-service-url.run.app/api/status
 1. Đăng nhập [Cloudflare Dashboard](https://dash.cloudflare.com/)
 2. Vào R2 Object Storage → Create Bucket → tên: `eds-releases`
 3. Vào Settings → Public Access → Enable (hoặc setup custom domain)
+4. Tạo API Token: R2 → Manage R2 API Tokens → Create API Token → chọn quyền `Object Read & Write`
 
-### 8.2 Upload release
+### 8.2 Cấu hình credentials
 
-Tạo file `latest.json`:
+Thêm vào `.env` (hoặc đặt biến môi trường):
 
-```json
-{
-    "version": "1.1.0",
-    "download_url": "https://releases.your-domain.com/EmotionDataStudio-1.1.0-Setup.exe",
-    "release_notes": "- Cải thiện hiệu năng AI pipeline\n- Thêm keyboard shortcuts\n- Fix crash khi export",
-    "file_size": 85000000,
-    "sha256": "abc123..."
-}
+```env
+# URL công khai của R2 bucket (app desktop dùng để kiểm tra cập nhật)
+EDS_UPDATE_URL=https://releases.your-domain.com
+
+# R2 S3-compatible credentials (chỉ cần trên máy build, KHÔNG cần trên máy end-user)
+R2_ENDPOINT=https://xxxxxxxxxxxx.r2.cloudflarestorage.com
+AWS_ACCESS_KEY_ID=your-r2-access-key-id
+AWS_SECRET_ACCESS_KEY=your-r2-secret-access-key
 ```
 
-Upload lên R2:
+### 8.3 Publish release (tự động)
+
+Sử dụng script `publish_release.ps1` để tự động hóa toàn bộ quy trình:
+
+```powershell
+cd tools/emotion-data-studio
+
+# Build + Upload lên R2 (tự động tính SHA256, tạo latest.json)
+.\build\publish_release.ps1 -Version "1.1.0" -ReleaseNotes "- Fix bug XYZ`n- Thêm tính năng ABC"
+
+# Chỉ upload (đã build sẵn, bỏ qua bước build)
+.\build\publish_release.ps1 -Version "1.1.0" -SkipBuild
+
+# Dry run — kiểm tra mà không upload thật
+.\build\publish_release.ps1 -Version "1.1.0" -DryRun
+
+# Dùng AWS CLI thay vì wrangler
+.\build\publish_release.ps1 -Version "1.1.0" -UploadMethod aws
+```
+
+Script sẽ tự động:
+1. Build app bằng `build.ps1` (PyInstaller + Inno Setup)
+2. Tính SHA256 hash của file installer
+3. Tạo `latest.json` với metadata (version, download_url, file_size, sha256)
+4. Upload cả installer `.exe` và `latest.json` lên R2
+
+### 8.4 Upload thủ công (fallback)
+
+Nếu không dùng script tự động, có thể upload bằng tay:
+
 ```bash
 # Cài wrangler (Cloudflare CLI)
 npm install -g wrangler
@@ -464,20 +533,31 @@ npm install -g wrangler
 wrangler login
 
 # Upload
-wrangler r2 object put eds-releases/latest.json --file=latest.json
-wrangler r2 object put eds-releases/EmotionDataStudio-1.1.0-Setup.exe --file=path/to/installer.exe
+wrangler r2 object put eds-releases/latest.json --file=build/latest.json
+wrangler r2 object put eds-releases/EmotionDataStudio-1.1.0-Setup.exe --file=installer/output/EmotionDataStudio-1.1.0-Setup.exe
 ```
 
-### 8.3 Cấu hình trong app
+Format file `latest.json`:
 
-Đặt URL vào `.env`:
-```env
-EDS_UPDATE_URL=https://releases.your-domain.com
+```json
+{
+    "version": "1.1.0",
+    "download_url": "https://releases.your-domain.com/EmotionDataStudio-1.1.0-Setup.exe",
+    "release_notes": "- Cải thiện hiệu năng AI pipeline\n- Thêm keyboard shortcuts",
+    "file_size": 85000000,
+    "sha256": "a1b2c3d4e5f6..."
+}
 ```
 
-App sẽ tự động kiểm tra `{EDS_UPDATE_URL}/latest.json` mỗi lần khởi động.
+### 8.5 Cách hoạt động trong app
+
+- App desktop kiểm tra `{EDS_UPDATE_URL}/latest.json` mỗi lần khởi động (silent check sau 3 giây)
+- So sánh version: nếu remote > local → hiện dialog thông báo cập nhật
+- Người dùng xác nhận → tải installer → verify SHA256 → launch installer `/SILENT` → tự thoát app cũ
+- Kiểm tra thủ công: từ giao diện Settings hoặc gọi `check_for_updates_manual()`
 
 ---
+
 
 ## 9. Xử lý lỗi thường gặp
 

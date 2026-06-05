@@ -44,6 +44,16 @@ class Phase1Trainer:
         self.best_checkpoint_path = self.config.paths.checkpoints_dir / self.config.training.checkpoint_name
         self.last_checkpoint_path = self.config.paths.checkpoints_dir / self.config.training.last_checkpoint_name
 
+        if self.config.wandb.enable:
+            import wandb
+            wandb.init(
+                project=self.config.wandb.project,
+                entity=self.config.wandb.entity,
+                config=asdict(self.config),
+                name=f"phase1_early_fusion_{self.config.runtime.profile}"
+            )
+            wandb.watch(self.model, log="all")
+
     @staticmethod
     def set_seed(seed: int) -> None:
         random.seed(seed)
@@ -51,6 +61,29 @@ class Phase1Trainer:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+
+    def _upload_to_gcs(self, local_path: Path) -> None:
+        if not self.config.runtime.use_gcs:
+            return
+        
+        import subprocess
+        bucket = self.config.runtime.gcs_bucket
+        
+        if "checkpoints" in str(local_path):
+            folder = "checkpoints/phase1"
+        elif "logs" in str(local_path):
+            folder = "logs/phase1"
+        elif "outputs" in str(local_path):
+            folder = "outputs/phase1"
+        else:
+            folder = "artifacts/phase1"
+            
+        gcs_dest = f"gs://{bucket}/{folder}/{local_path.name}"
+        try:
+            subprocess.run(["gsutil", "cp", str(local_path), gcs_dest], check=True, capture_output=True)
+            print(f"Successfully uploaded {local_path.name} to {gcs_dest}")
+        except Exception as e:
+            print(f"Failed to upload {local_path} to GCS: {e}")
 
     def fit(self, train_loader, valid_loader) -> dict[str, Any]:
         self.set_seed(self.config.training.seed)
@@ -90,6 +123,19 @@ class Phase1Trainer:
             else:
                 epochs_without_improvement += 1
 
+            if self.config.wandb.enable:
+                import wandb
+                wandb.log({
+                    "epoch": epoch,
+                    "train/loss": train_loss,
+                    "train/eval_loss": train_eval_loss,
+                    **{f"train/{k}": v for k, v in train_metrics.items()},
+                    "val/loss": valid_loss,
+                    **{f"val/{k}": v for k, v in valid_metrics.items()},
+                    "best_metric": best_metric,
+                    "learning_rate": self.optimizer.param_groups[0]["lr"]
+                })
+
             checkpoint_state = self._build_checkpoint_state(
                 epoch=epoch,
                 train_loss=train_loss,
@@ -100,17 +146,20 @@ class Phase1Trainer:
                 epochs_without_improvement=epochs_without_improvement,
             )
             torch.save(checkpoint_state, self.last_checkpoint_path)
+            self._upload_to_gcs(self.last_checkpoint_path)
             last_completed_epoch = epoch
 
             train_row = metrics_to_row("train", epoch, train_eval_loss, train_metrics)
             train_row["train_step_loss"] = float(train_loss)
             valid_row = metrics_to_row("valid", epoch, valid_loss, valid_metrics)
             self._append_history([train_row, valid_row])
+            self._upload_to_gcs(self.history_path)
             history_rows += 2
 
             if improved:
                 best_state = checkpoint_state
                 torch.save(checkpoint_state, self.best_checkpoint_path)
+                self._upload_to_gcs(self.best_checkpoint_path)
 
             if epochs_without_improvement >= self.config.training.patience:
                 break
@@ -133,6 +182,12 @@ class Phase1Trainer:
             "device": str(self.device),
         }
         self.summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        self._upload_to_gcs(self.summary_path)
+
+        if self.config.wandb.enable:
+            import wandb
+            wandb.finish()
+
         return summary
 
     def load_best_checkpoint(self) -> dict[str, Any]:
@@ -301,4 +356,4 @@ class Phase1Trainer:
 
     def _reset_history_for_fresh_run(self) -> None:
         if self.history_path.exists():
-            self.history_path.unlink()
+            self.history_path.unlink(missing_ok=True)

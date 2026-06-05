@@ -4,9 +4,8 @@
 
 # === Data & Models ===
 data/
-checkpoints/*.pt
-checkpoints/*.pth
-checkpoints/*.ckpt
+checkpoints/
+outputs/
 *.h5
 *.onnx
 *.safetensors
@@ -52,7 +51,18 @@ tools/emotion-data-studio/logs/
 tools/emotion-data-studio/build/pyinstaller_work/
 tools/emotion-data-studio/installer/output/
 tools/emotion-data-studio/*.exe
+tools/emotion-data-studio/service-account-key.json
+tools/emotion-data-studio/*service-account*.json
+tools/emotion-data-studio/credentials*.json
 
 # === Temporary ===
 *.tmp
 *.bak
+
+# === Media ===
+*.mp4
+*.avi
+*.mkv
+*.wav
+*.mp3
+*.part

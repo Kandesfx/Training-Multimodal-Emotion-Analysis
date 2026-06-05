@@ -19,6 +19,7 @@ class Video(Base):
     duration_sec = Column(Float, nullable=True)
     resolution = Column(String, nullable=True)                   # e.g., "1280x720"
     status = Column(String, default="pending")                   # pending, processing, completed, error
+    processing_mode = Column(String, default="auto")              # auto, semi_auto, manual
     total_clips = Column(Integer, default=0)
     approved_clips = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -38,6 +39,7 @@ class Video(Base):
             "duration_sec": self.duration_sec,
             "resolution": self.resolution,
             "status": self.status,
+            "processing_mode": self.processing_mode,
             "total_clips": self.total_clips,
             "approved_clips": self.approved_clips,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -55,6 +57,7 @@ class Clip(Base):
     duration = Column(Float, nullable=False)                     # Duration in seconds
     clip_path = Column(String, nullable=True)                    # Local file path
     gcs_path = Column(String, nullable=True)                     # GCS cloud path
+    is_manual_segment = Column(Boolean, default=False)            # True nếu do người dùng cắt thủ công
     
     # Face & Visual Metadata
     num_frames = Column(Integer, default=0)
