@@ -17,7 +17,7 @@ class Phase1RuntimeConfig:
     colab_repo_root: Path = DEFAULT_COLAB_REPO_ROOT
     use_drive_outputs_on_colab: bool = True
     use_gcs: bool = False
-    gcs_bucket: str = "eds-data-bucket"
+    gcs_bucket: str = "mer-data-bucket-kandesfx"
 
 
 @dataclass
