@@ -264,6 +264,12 @@ class Phase1Trainer:
                 loss = self.criterion(preds, labels)
 
             if training:
+                # Guard: skip batch if loss is NaN (prevents poisoning optimizer state)
+                if not torch.isfinite(loss):
+                    print(f"\n  [WARNING] Non-finite loss ({loss.item()}) at step {step} — skipping batch")
+                    self.optimizer.zero_grad(set_to_none=True)
+                    continue
+
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.max_grad_norm)

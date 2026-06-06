@@ -253,6 +253,25 @@ class MulTRegressor(nn.Module):
             nn.Linear(config.fusion_hidden_dim // 2, config.output_dim),
         )
 
+    @staticmethod
+    def _ensure_valid_mask(mask: Tensor) -> Tensor:
+        """Guarantee at least one True (valid) position per row.
+
+        Root cause protection: MOSEI vision features are all-zero for samples
+        where no face was detected (482 train / 41 valid / 174 test samples).
+        An all-False mask causes nn.MultiheadAttention to compute
+        softmax([-inf, -inf, ...]) = NaN, poisoning the entire batch.
+
+        Fix: force position 0 to be valid for any all-masked rows.
+        This is safe — position 0 holds a real (zero) feature vector whose
+        contribution will be down-weighted by attention scores anyway.
+        """
+        all_invalid = ~mask.any(dim=-1, keepdim=True)   # (B, 1)
+        if all_invalid.any():
+            mask = mask.clone()
+            mask[:, 0] = mask[:, 0] | all_invalid.squeeze(-1)
+        return mask
+
     def forward(
         self,
         text: Tensor,
@@ -273,17 +292,21 @@ class MulTRegressor(nn.Module):
         """
         # --- Padding masks (True = valid token, False = padding) ---
         # Aligned: detect zeros. Unaligned: use provided lengths for precision.
-        t_mask = (text.abs().sum(dim=-1) > 1e-6)                         # (B, T)
+        t_mask = self._ensure_valid_mask(text.abs().sum(dim=-1) > 1e-6)   # (B, T)
 
         if audio_lengths is not None:
-            a_mask = lengths_to_mask(audio_lengths, audio.size(1))        # (B, A)
+            a_mask = self._ensure_valid_mask(
+                lengths_to_mask(audio_lengths, audio.size(1))              # (B, A)
+            )
         else:
-            a_mask = (audio.abs().sum(dim=-1) > 1e-6)                    # (B, A)
+            a_mask = self._ensure_valid_mask(audio.abs().sum(dim=-1) > 1e-6)  # (B, A)
 
         if vision_lengths is not None:
-            v_mask = lengths_to_mask(vision_lengths, vision.size(1))      # (B, V)
+            v_mask = self._ensure_valid_mask(
+                lengths_to_mask(vision_lengths, vision.size(1))            # (B, V)
+            )
         else:
-            v_mask = (vision.abs().sum(dim=-1) > 1e-6)                   # (B, V)
+            v_mask = self._ensure_valid_mask(vision.abs().sum(dim=-1) > 1e-6) # (B, V)
 
         # 1. Project to d_model
         t = self.pe(self.proj_text(text))       # (B, T, d)

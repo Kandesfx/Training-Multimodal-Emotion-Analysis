@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,22 @@ def _clip_and_round(values: np.ndarray, low: int, high: int) -> np.ndarray:
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     y_true = np.asarray(y_true, dtype=np.float32).reshape(-1)
     y_pred = np.asarray(y_pred, dtype=np.float32).reshape(-1)
+
+    # Guard: filter out NaN/Inf predictions to avoid cascading errors
+    valid = np.isfinite(y_pred) & np.isfinite(y_true)
+    if not valid.all():
+        n_invalid = int((~valid).sum())
+        warnings.warn(
+            f"compute_metrics: {n_invalid}/{len(y_pred)} NaN/Inf predictions filtered. "
+            "This usually indicates loss=nan — check model for all-zero input sequences.",
+            RuntimeWarning, stacklevel=2,
+        )
+        y_true = y_true[valid]
+        y_pred  = y_pred[valid]
+
+    if len(y_true) == 0:
+        return {"mae": float("nan"), "mse": float("nan"), "corr": 0.0,
+                "acc2": 0.0, "acc5": 0.0, "acc7": 0.0, "f1": 0.0}
 
     mae = float(np.mean(np.abs(y_true - y_pred)))
     mse = float(np.mean((y_true - y_pred) ** 2))
