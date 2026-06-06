@@ -11,11 +11,37 @@ import numpy as np
 import torch
 from torch import nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+)
 from tqdm import tqdm
 
 from training.config_phase1 import Phase1Config
 from training.evaluator import compute_metrics, metrics_to_row
+
+
+class _CombinedMSEL1Loss(nn.Module):
+    """Combined MSE + L1 loss for sentiment regression.
+
+    Directly optimizes both squared error and absolute error.
+    L1 component aligns training signal with the evaluation metric (MAE).
+
+    loss = (1 - l1_weight) * MSE + l1_weight * L1
+    """
+
+    def __init__(self, l1_weight: float = 0.5):
+        super().__init__()
+        self.l1_weight = l1_weight
+        self.mse = nn.MSELoss()
+        self.l1 = nn.L1Loss()
+
+    def forward(self, pred, target):
+        return (1 - self.l1_weight) * self.mse(pred, target) + self.l1_weight * self.l1(pred, target)
+
+
 
 
 class Phase1Trainer:
@@ -25,18 +51,14 @@ class Phase1Trainer:
         self.config.setup()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
-        self.criterion = nn.MSELoss()
+        self.criterion = self._build_criterion()
         self.optimizer = AdamW(
             self.model.parameters(),
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay,
         )
-        self.scheduler = ReduceLROnPlateau(
-            self.optimizer,
-            mode="min",
-            factor=self.config.training.scheduler_factor,
-            patience=self.config.training.scheduler_patience,
-        )
+        self.scheduler = self._build_scheduler()
+        self.scheduler_type = self.config.training.scheduler_type
         self.use_amp = self.config.training.use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
         self.history_path = self.config.paths.logs_dir / "history.csv"
@@ -61,6 +83,43 @@ class Phase1Trainer:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+
+    def _build_criterion(self) -> nn.Module:
+        """Build loss function based on config.training.loss_type."""
+        loss_type = self.config.training.loss_type.lower().strip()
+        if loss_type == "mse":
+            return nn.MSELoss()
+        if loss_type == "mse_l1":
+            return _CombinedMSEL1Loss(l1_weight=self.config.training.l1_weight)
+        raise ValueError(f"Unsupported loss_type: {loss_type!r}. Use 'mse' or 'mse_l1'.")
+
+    def _build_scheduler(self):
+        """Build LR scheduler based on config.training.scheduler_type."""
+        sched_type = self.config.training.scheduler_type.lower().strip()
+        if sched_type == "plateau":
+            return ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=self.config.training.scheduler_factor,
+                patience=self.config.training.scheduler_patience,
+            )
+        if sched_type == "cosine_warmup":
+            warmup = LinearLR(
+                self.optimizer,
+                start_factor=0.01,           # start at 1% of peak LR
+                total_iters=self.config.training.warmup_epochs,
+            )
+            cosine = CosineAnnealingLR(
+                self.optimizer,
+                T_max=max(1, self.config.training.num_epochs - self.config.training.warmup_epochs),
+                eta_min=self.config.training.min_lr,
+            )
+            return SequentialLR(
+                self.optimizer,
+                schedulers=[warmup, cosine],
+                milestones=[self.config.training.warmup_epochs],
+            )
+        raise ValueError(f"Unsupported scheduler_type: {sched_type!r}. Use 'plateau' or 'cosine_warmup'.")
 
     def _upload_to_gcs(self, local_path: Path) -> None:
         if not self.config.runtime.use_gcs:
@@ -113,7 +172,11 @@ class Phase1Trainer:
             train_loss = self._run_epoch(train_loader, training=True, epoch=epoch)
             train_eval_loss, train_metrics = self.evaluate(train_loader, split="train", epoch=epoch)
             valid_loss, valid_metrics = self.evaluate(valid_loader, split="valid", epoch=epoch)
-            self.scheduler.step(valid_loss)
+            # Scheduler step — plateau uses metric, cosine_warmup uses epoch count
+            if self.scheduler_type == "plateau":
+                self.scheduler.step(valid_loss)
+            else:
+                self.scheduler.step()
 
             current_metric = valid_metrics[self.config.training.metric_for_best]
             improved = current_metric > best_metric if self.config.training.maximize_metric else current_metric < best_metric

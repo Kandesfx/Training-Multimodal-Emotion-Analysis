@@ -116,6 +116,15 @@ class Phase1TrainingConfig:
     last_checkpoint_name: str = "last_model.pt"
     resume_checkpoint_type: str = "last"
 
+    # --- Loss ---
+    loss_type: str = "mse"          # "mse" or "mse_l1" (combined MSE + L1)
+    l1_weight: float = 0.5          # weight of L1 in combined loss (MSE weight = 1 - l1_weight)
+
+    # --- Scheduler ---
+    scheduler_type: str = "plateau"        # "plateau" or "cosine_warmup"
+    warmup_epochs: int = 5                 # linear warmup epochs (cosine_warmup only)
+    min_lr: float = 1e-6                   # minimum LR floor (cosine_warmup only)
+
 
 @dataclass
 class Phase1DataConfig:
