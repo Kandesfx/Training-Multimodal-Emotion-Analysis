@@ -213,7 +213,14 @@ class Phase1Trainer:
                 vision = batch["vision"].to(self.device, non_blocking=True)
                 labels = batch["label"].to(self.device, non_blocking=True)
 
-                preds = self.model(text=text, audio=audio, vision=vision)
+                # Unaligned batches carry length tensors; aligned batches do not.
+                audio_lengths = batch["audio_len"].to(self.device, non_blocking=True) if "audio_len" in batch else None
+                vision_lengths = batch["vision_len"].to(self.device, non_blocking=True) if "vision_len" in batch else None
+
+                preds = self.model(
+                    text=text, audio=audio, vision=vision,
+                    audio_lengths=audio_lengths, vision_lengths=vision_lengths,
+                )
                 loss = self.criterion(preds, labels)
                 total_loss += loss.item() * labels.size(0)
                 all_preds.append(preds.detach().cpu().numpy())
@@ -242,11 +249,18 @@ class Phase1Trainer:
             vision = batch["vision"].to(self.device, non_blocking=True)
             labels = batch["label"].to(self.device, non_blocking=True)
 
+            # Unaligned batches carry length tensors; aligned batches do not.
+            audio_lengths = batch["audio_len"].to(self.device, non_blocking=True) if "audio_len" in batch else None
+            vision_lengths = batch["vision_len"].to(self.device, non_blocking=True) if "vision_len" in batch else None
+
             if training:
                 self.optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
-                preds = self.model(text=text, audio=audio, vision=vision)
+                preds = self.model(
+                    text=text, audio=audio, vision=vision,
+                    audio_lengths=audio_lengths, vision_lengths=vision_lengths,
+                )
                 loss = self.criterion(preds, labels)
 
             if training:

@@ -5,7 +5,10 @@ Implements the Cross-Modal Attention mechanism from:
     "Multimodal Transformer for Unaligned Multimodal Language Sequences"
     (Tsai et al., ACL 2019)
 
-Adapted for CMU-MOSEI aligned features (Phase 1 Pre-training).
+Supports both:
+  - Aligned mode  (aligned_50.pkl):   all 3 modalities share seq_len=50
+  - Unaligned mode (unaligned_50.pkl): audio/vision have seq_len=500,
+    with audio_lengths / vision_lengths indicating true lengths.
 """
 from __future__ import annotations
 
@@ -15,6 +18,23 @@ import torch
 from torch import nn, Tensor
 
 from training.models.attention_pooling import AttentionPooling
+
+
+# ---------------------------------------------------------------------------
+# Helper: convert length integers → boolean padding mask
+# ---------------------------------------------------------------------------
+
+def lengths_to_mask(lengths: Tensor, max_len: int) -> Tensor:
+    """Convert a 1-D lengths tensor to a boolean valid-positions mask.
+
+    Args:
+        lengths: (batch,) int64 — actual sequence length per sample
+        max_len: total padded sequence length
+    Returns:
+        mask: (batch, max_len) bool — True where position is valid (not padding)
+    """
+    # arange: (1, max_len)  vs lengths: (batch, 1)
+    return torch.arange(max_len, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(1)
 
 
 # ---------------------------------------------------------------------------
@@ -233,47 +253,67 @@ class MulTRegressor(nn.Module):
             nn.Linear(config.fusion_hidden_dim // 2, config.output_dim),
         )
 
-    def forward(self, text: Tensor, audio: Tensor, vision: Tensor) -> Tensor:
+    def forward(
+        self,
+        text: Tensor,
+        audio: Tensor,
+        vision: Tensor,
+        audio_lengths: Tensor | None = None,
+        vision_lengths: Tensor | None = None,
+    ) -> Tensor:
         """
         Args:
-            text:   (batch, seq_len, 768)
-            audio:  (batch, seq_len, 74)
-            vision: (batch, seq_len, 35)
+            text:           (batch, T,   768)  — text features
+            audio:          (batch, A,    74)  — audio features  (A=50 aligned / A=500 unaligned)
+            vision:         (batch, V,    35)  — vision features (V=50 aligned / V=500 unaligned)
+            audio_lengths:  (batch,) int64 optional — actual audio frames (unaligned only)
+            vision_lengths: (batch,) int64 optional — actual vision frames (unaligned only)
         Returns:
             (batch,) — sentiment score
         """
-        # Tạo padding mask (True = valid, False = padding)
-        t_mask = (text.abs().sum(dim=-1) > 1e-6)      # (B, S)
-        a_mask = (audio.abs().sum(dim=-1) > 1e-6)     # (B, S)
-        v_mask = (vision.abs().sum(dim=-1) > 1e-6)    # (B, S)
+        # --- Padding masks (True = valid token, False = padding) ---
+        # Aligned: detect zeros. Unaligned: use provided lengths for precision.
+        t_mask = (text.abs().sum(dim=-1) > 1e-6)                         # (B, T)
+
+        if audio_lengths is not None:
+            a_mask = lengths_to_mask(audio_lengths, audio.size(1))        # (B, A)
+        else:
+            a_mask = (audio.abs().sum(dim=-1) > 1e-6)                    # (B, A)
+
+        if vision_lengths is not None:
+            v_mask = lengths_to_mask(vision_lengths, vision.size(1))      # (B, V)
+        else:
+            v_mask = (vision.abs().sum(dim=-1) > 1e-6)                   # (B, V)
 
         # 1. Project to d_model
-        t = self.pe(self.proj_text(text))       # (B, S, d)
-        a = self.pe(self.proj_audio(audio))     # (B, S, d)
-        v = self.pe(self.proj_vision(vision))   # (B, S, d)
+        t = self.pe(self.proj_text(text))       # (B, T, d)
+        a = self.pe(self.proj_audio(audio))     # (B, A, d)
+        v = self.pe(self.proj_vision(vision))   # (B, V, d)
 
-        # 2. Cross-modal attention (6 flows with source padding masks)
-        t_with_a = self.cross_t_a(target=t, source=a, key_padding_mask=~a_mask)
-        t_with_v = self.cross_t_v(target=t, source=v, key_padding_mask=~v_mask)
-        a_with_t = self.cross_a_t(target=a, source=t, key_padding_mask=~t_mask)
-        a_with_v = self.cross_a_v(target=a, source=v, key_padding_mask=~v_mask)
-        v_with_t = self.cross_v_t(target=v, source=t, key_padding_mask=~t_mask)
-        v_with_a = self.cross_v_a(target=v, source=a, key_padding_mask=~a_mask)
+        # 2. Cross-modal attention (6 flows with source key_padding_mask)
+        #    Q and K/V can have different sequence lengths — nn.MultiheadAttention
+        #    handles this natively (output shape = Q shape).
+        t_with_a = self.cross_t_a(target=t, source=a, key_padding_mask=~a_mask)  # (B, T, d)
+        t_with_v = self.cross_t_v(target=t, source=v, key_padding_mask=~v_mask)  # (B, T, d)
+        a_with_t = self.cross_a_t(target=a, source=t, key_padding_mask=~t_mask)  # (B, A, d)
+        a_with_v = self.cross_a_v(target=a, source=v, key_padding_mask=~v_mask)  # (B, A, d)
+        v_with_t = self.cross_v_t(target=v, source=t, key_padding_mask=~t_mask)  # (B, V, d)
+        v_with_a = self.cross_v_a(target=v, source=a, key_padding_mask=~a_mask)  # (B, V, d)
 
         # 3. Merge (residual sum)
-        t_merged = t + t_with_a + t_with_v
-        a_merged = a + a_with_t + a_with_v
-        v_merged = v + v_with_t + v_with_a
+        t_merged = t + t_with_a + t_with_v     # (B, T, d)
+        a_merged = a + a_with_t + a_with_v     # (B, A, d)
+        v_merged = v + v_with_t + v_with_a     # (B, V, d)
 
         # 4. Self-attention (with padding masks)
-        t_encoded = self.self_attn_text(t_merged, key_padding_mask=~t_mask)
-        a_encoded = self.self_attn_audio(a_merged, key_padding_mask=~a_mask)
-        v_encoded = self.self_attn_vision(v_merged, key_padding_mask=~v_mask)
+        t_encoded = self.self_attn_text(t_merged,  key_padding_mask=~t_mask)  # (B, T, d)
+        a_encoded = self.self_attn_audio(a_merged, key_padding_mask=~a_mask)  # (B, A, d)
+        v_encoded = self.self_attn_vision(v_merged, key_padding_mask=~v_mask) # (B, V, d)
 
-        # 5. Attention Pooling (instead of [:, -1, :])
-        t_repr, _ = self.text_pool(t_encoded, t_mask)
-        a_repr, _ = self.audio_pool(a_encoded, a_mask)
-        v_repr, _ = self.vision_pool(v_encoded, v_mask)
+        # 5. Attention Pooling → fixed-size representation per modality
+        t_repr, _ = self.text_pool(t_encoded,  t_mask)   # (B, d)
+        a_repr, _ = self.audio_pool(a_encoded, a_mask)   # (B, d)
+        v_repr, _ = self.vision_pool(v_encoded, v_mask)  # (B, d)
 
         # 6. LayerNorm
         t_repr = self.text_ln(t_repr)
@@ -281,5 +321,5 @@ class MulTRegressor(nn.Module):
         v_repr = self.vision_ln(v_repr)
 
         # 7. Concatenate and predict
-        fused = torch.cat([t_repr, a_repr, v_repr], dim=1)
-        return self.regressor(fused).squeeze(-1)
+        fused = torch.cat([t_repr, a_repr, v_repr], dim=1)  # (B, 3*d)
+        return self.regressor(fused).squeeze(-1)              # (B,)

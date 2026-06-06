@@ -32,6 +32,7 @@ class Phase1PathConfig:
     project_root: Path = PROJECT_ROOT
     data_root: Path = PROJECT_ROOT / "data"
     mosei_pkl: Path = PROJECT_ROOT / "data" / "MSA-Dataset" / "aligned_50.pkl"
+    mosei_unaligned_pkl: Path = PROJECT_ROOT / "data" / "MSA-Dataset" / "unaligned_50.pkl"
     checkpoints_dir: Path = PROJECT_ROOT / "checkpoints" / "phase1"
     logs_dir: Path = PROJECT_ROOT / "logs" / "phase1"
     outputs_dir: Path = PROJECT_ROOT / "outputs" / "phase1"
@@ -45,6 +46,7 @@ class Phase1PathConfig:
             "project_root": str(self.project_root),
             "data_root": str(self.data_root),
             "mosei_pkl": str(self.mosei_pkl),
+            "mosei_unaligned_pkl": str(self.mosei_unaligned_pkl),
             "checkpoints_dir": str(self.checkpoints_dir),
             "logs_dir": str(self.logs_dir),
             "outputs_dir": str(self.outputs_dir),
@@ -117,7 +119,8 @@ class Phase1TrainingConfig:
 
 @dataclass
 class Phase1DataConfig:
-    sequence_length: int = 50
+    sequence_length: int = 50            # text & aligned audio/vision
+    audio_vision_seq_len: int = 500      # max seq len for unaligned audio/vision
     replace_inf: bool = True
     audio_inf_replacement: float = 0.0
     cast_float32: bool = True
@@ -147,6 +150,7 @@ class Phase1Config:
             self.paths.project_root = PROJECT_ROOT
             self.paths.data_root = self.paths.project_root / "data"
             self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+            self.paths.mosei_unaligned_pkl = self.paths.data_root / "MSA-Dataset" / "unaligned_50.pkl"
             self.paths.checkpoints_dir = self.paths.project_root / "checkpoints" / "phase1"
             self.paths.logs_dir = self.paths.project_root / "logs" / "phase1"
             self.paths.outputs_dir = self.paths.project_root / "outputs" / "phase1"
@@ -157,6 +161,7 @@ class Phase1Config:
             self.paths.project_root = drive
             self.paths.data_root = drive / "data"
             self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+            self.paths.mosei_unaligned_pkl = self.paths.data_root / "MSA-Dataset" / "unaligned_50.pkl"
             self.paths.checkpoints_dir = drive / "checkpoints" / "phase1"
             self.paths.logs_dir = drive / "logs" / "phase1"
             self.paths.outputs_dir = drive / "outputs" / "phase1"
@@ -169,12 +174,14 @@ class Phase1Config:
             if self.runtime.use_gcs:
                 self.paths.data_root = Path("/content/data")
                 self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+                self.paths.mosei_unaligned_pkl = self.paths.data_root / "MSA-Dataset" / "unaligned_50.pkl"
                 self.paths.checkpoints_dir = Path("/content/checkpoints/phase1")
                 self.paths.logs_dir = Path("/content/logs/phase1")
                 self.paths.outputs_dir = Path("/content/outputs/phase1")
             else:
                 self.paths.data_root = drive / "data"
                 self.paths.mosei_pkl = self.paths.data_root / "MSA-Dataset" / "aligned_50.pkl"
+                self.paths.mosei_unaligned_pkl = self.paths.data_root / "MSA-Dataset" / "unaligned_50.pkl"
                 if self.runtime.use_drive_outputs_on_colab:
                     self.paths.checkpoints_dir = drive / "checkpoints" / "phase1"
                     self.paths.logs_dir = drive / "logs" / "phase1"
