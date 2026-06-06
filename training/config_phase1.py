@@ -81,7 +81,7 @@ class Phase1MulTModelConfig:
     # Transformer dimensions
     d_model: int = 64
     num_heads: int = 4
-    num_cross_layers: int = 3
+    num_cross_layers: int = 4      # Increased from 3 for deeper cross-modal learning
     num_self_layers: int = 2
     ffn_dim: int = 128
     attn_dropout: float = 0.1

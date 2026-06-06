@@ -3,29 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 from training.config_phase1 import Phase1ModelConfig
-
-
-class AttentionPooling(nn.Module):
-    """Temporal attention pooling that supports masking for padding tokens."""
-    def __init__(self, dim: int):
-        super().__init__()
-        self.attn = nn.Sequential(
-            nn.Linear(dim, dim // 2),
-            nn.Tanh(),
-            nn.Linear(dim // 2, 1, bias=False)
-        )
-
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        # x: [B, T, D]
-        # mask: [B, T] (True for real tokens, False for padding)
-        attn_logits = self.attn(x).squeeze(-1) # [B, T]
-        if mask is not None:
-            # Set padding positions to a very large negative value
-            attn_logits = attn_logits.masked_fill(~mask, -1e4)
-        attn_weights = torch.softmax(attn_logits, dim=-1) # [B, T]
-        attn_weights_unsqueezed = attn_weights.unsqueeze(-1) # [B, T, 1]
-        pooled = torch.sum(x * attn_weights_unsqueezed, dim=1) # [B, D]
-        return pooled, attn_weights
+from training.models.attention_pooling import AttentionPooling
 
 
 class GatedFusion(nn.Module):

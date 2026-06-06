@@ -580,7 +580,7 @@ class MulTRegressor(nn.Module):
         return self.regressor(fused).squeeze(-1)
 ```
 
-> **Lưu ý quan trọng:** Nếu muốn truyền `key_padding_mask` cho Cross-Modal Attention, cần sửa thêm `CrossModalAttentionLayer.forward()` để nhận và truyền `source_padding_mask`. Đây là cải tiến nâng cao, có thể thêm sau khi có baseline MulT chạy được.
+> **Đã hoàn thiện:** Chúng ta đã truyền đầy đủ `key_padding_mask` (nhận `~source_mask` hoặc `~target_mask`) cho cả Cross-Modal Attention, Self-Attention Encoder và Attention Pooling để triệt tiêu hoàn toàn nhiễu từ token padding.
 
 ---
 

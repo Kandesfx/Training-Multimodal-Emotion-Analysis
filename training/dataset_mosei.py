@@ -58,12 +58,23 @@ class MOSEIAlignedDataset(Dataset):
     def _validate_shapes(self) -> None:
         n = len(self.labels)
         expected_seq = self.config.data.sequence_length
-        if self.text.shape != (n, expected_seq, self.config.model.text_input_dim):
-            raise ValueError(f"Unexpected text shape: {self.text.shape}")
-        if self.audio.shape != (n, expected_seq, self.config.model.audio_input_dim):
-            raise ValueError(f"Unexpected audio shape: {self.audio.shape}")
-        if self.vision.shape != (n, expected_seq, self.config.model.vision_input_dim):
-            raise ValueError(f"Unexpected vision shape: {self.vision.shape}")
+
+        # Chọn input dims dựa trên model_type
+        if self.config.model_type == "mult":
+            text_dim = self.config.mult_model.text_input_dim
+            audio_dim = self.config.mult_model.audio_input_dim
+            vision_dim = self.config.mult_model.vision_input_dim
+        else:
+            text_dim = self.config.model.text_input_dim
+            audio_dim = self.config.model.audio_input_dim
+            vision_dim = self.config.model.vision_input_dim
+
+        if self.text.shape != (n, expected_seq, text_dim):
+            raise ValueError(f"Unexpected text shape: {self.text.shape}, expected (n, {expected_seq}, {text_dim})")
+        if self.audio.shape != (n, expected_seq, audio_dim):
+            raise ValueError(f"Unexpected audio shape: {self.audio.shape}, expected (n, {expected_seq}, {audio_dim})")
+        if self.vision.shape != (n, expected_seq, vision_dim):
+            raise ValueError(f"Unexpected vision shape: {self.vision.shape}, expected (n, {expected_seq}, {vision_dim})")
 
     def __len__(self) -> int:
         return len(self.labels)
