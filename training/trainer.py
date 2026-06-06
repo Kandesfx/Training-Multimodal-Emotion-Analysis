@@ -344,7 +344,10 @@ class Phase1Trainer:
     def _load_checkpoint_state(self, checkpoint_path: Path) -> dict[str, Any]:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        return torch.load(checkpoint_path, map_location=self.device)
+        try:
+            return torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            return torch.load(checkpoint_path, map_location=self.device)
 
     def _load_existing_history_count(self) -> int:
         if not self.history_path.exists():
