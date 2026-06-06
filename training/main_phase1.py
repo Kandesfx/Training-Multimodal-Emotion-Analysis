@@ -13,7 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from training.config_phase1 import Phase1Config, config as default_config
 from training.dataset_mosei import create_dataloaders
-from training.models.early_fusion import EarlyFusionLSTMRegressor
 from training.trainer import Phase1Trainer
 
 
@@ -48,7 +47,19 @@ def main() -> None:
     cfg.setup()
 
     dataloaders = create_dataloaders(config=cfg, pkl_path=cfg.paths.mosei_pkl)
-    model = EarlyFusionLSTMRegressor(cfg.model)
+    
+    if cfg.model_type == "early_fusion":
+        from training.models.early_fusion import EarlyFusionLSTMRegressor
+        model = EarlyFusionLSTMRegressor(cfg.model)
+    elif cfg.model_type == "improved_lstm":
+        from training.models.improved_lstm import ImprovedLSTMRegressor
+        model = ImprovedLSTMRegressor(cfg.model)
+    elif cfg.model_type == "mult":
+        from training.models.mult import MulTRegressor
+        model = MulTRegressor(cfg.mult_model)
+    else:
+        raise ValueError(f"Unsupported model_type: {cfg.model_type}")
+
     trainer = Phase1Trainer(model=model, config=cfg)
 
     summary = trainer.fit(dataloaders["train"], dataloaders["valid"])

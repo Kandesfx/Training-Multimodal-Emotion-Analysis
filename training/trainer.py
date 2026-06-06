@@ -50,7 +50,7 @@ class Phase1Trainer:
                 project=self.config.wandb.project,
                 entity=self.config.wandb.entity,
                 config=asdict(self.config),
-                name=f"phase1_early_fusion_{self.config.runtime.profile}"
+                name=f"phase1_{self.config.model_type}_{self.config.runtime.profile}"
             )
             wandb.watch(self.model, log="all")
 

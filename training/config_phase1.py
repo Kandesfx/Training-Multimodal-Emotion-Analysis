@@ -65,6 +65,31 @@ class Phase1ModelConfig:
     fusion_dropout_1: float = 0.3
     fusion_dropout_2: float = 0.2
     output_dim: int = 1
+    use_attention_pooling: bool = True
+    use_gated_fusion: bool = True
+    projection_dim: int = 128
+
+
+@dataclass
+class Phase1MulTModelConfig:
+    """Configuration for the Multimodal Transformer (MulT) model."""
+    # Input dimensions (same as MOSEI features)
+    text_input_dim: int = 768
+    audio_input_dim: int = 74
+    vision_input_dim: int = 35
+
+    # Transformer dimensions
+    d_model: int = 64
+    num_heads: int = 4
+    num_cross_layers: int = 3
+    num_self_layers: int = 2
+    ffn_dim: int = 128
+    attn_dropout: float = 0.1
+
+    # Fusion head
+    fusion_hidden_dim: int = 128
+    fusion_dropout: float = 0.3
+    output_dim: int = 1
 
 
 @dataclass
@@ -101,9 +126,11 @@ class Phase1DataConfig:
 
 @dataclass
 class Phase1Config:
+    model_type: str = "early_fusion"  # "early_fusion", "improved_lstm", "mult"
     runtime: Phase1RuntimeConfig = field(default_factory=Phase1RuntimeConfig)
     paths: Phase1PathConfig = field(default_factory=Phase1PathConfig)
     model: Phase1ModelConfig = field(default_factory=Phase1ModelConfig)
+    mult_model: Phase1MulTModelConfig = field(default_factory=Phase1MulTModelConfig)
     training: Phase1TrainingConfig = field(default_factory=Phase1TrainingConfig)
     data: Phase1DataConfig = field(default_factory=Phase1DataConfig)
     wandb: Phase1WandbConfig = field(default_factory=Phase1WandbConfig)
