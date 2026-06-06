@@ -21,7 +21,7 @@ class AttentionPooling(nn.Module):
         attn_logits = self.attn(x).squeeze(-1) # [B, T]
         if mask is not None:
             # Set padding positions to a very large negative value
-            attn_logits = attn_logits.masked_fill(~mask, -1e9)
+            attn_logits = attn_logits.masked_fill(~mask, -1e4)
         attn_weights = torch.softmax(attn_logits, dim=-1) # [B, T]
         attn_weights_unsqueezed = attn_weights.unsqueeze(-1) # [B, T, 1]
         pooled = torch.sum(x * attn_weights_unsqueezed, dim=1) # [B, D]
