@@ -91,43 +91,48 @@ Vision (50, 35) ──► BiLSTM(hidden=64)  ──► Hidden State cuối ─�
 | Optimizer | AdamW (weight_decay=1e-4) |
 | Scheduler | ReduceLROnPlateau (factor=0.5, patience=3) |
 | Batch Size | 32 |
-| Số Epochs chạy | 10 |
+| Số Epochs (max / thực tế) | 50 / 14 (Early Stopping patience=8) |
 | Patience (Early Stopping) | 8 |
 | Mixed Precision (AMP) | Có |
 | Loss Function | MSELoss |
 
 ### 3.3. Kết Quả Huấn Luyện
 
-**Epoch tốt nhất:** Epoch 4 (dựa trên Validation MAE thấp nhất)
+**Epoch tốt nhất:** Epoch 6 (dựa trên Validation MAE thấp nhất = 0.5526)
+**Dừng huấn luyện:** Epoch 14 (Early Stopping sau 8 epochs không cải thiện)
 
-| Chỉ số | Train (Epoch 4) | Valid (Epoch 4) | Test (Epoch 4) |
-|:---|:---:|:---:|:---:|
-| **Loss (MSE)** | 0.4557 | 0.5541 | 0.6136 |
-| **MAE** | 0.5033 | 0.5466 | 0.5815 |
-| **Correlation** | 0.8004 | 0.7014 | 0.7125 |
-| **Acc-2** (Binary) | 0.8529 | 0.8290 | 0.8298 |
-| **Acc-5** (5 lớp) | 0.5815 | 0.5420 | 0.5237 |
-| **Acc-7** (7 lớp) | 0.5604 | 0.5313 | 0.5108 |
-| **F1-Score** | 0.8542 | 0.8309 | 0.8300 |
+| Chỉ số | Valid (Best Epoch 6) | Test (Best Epoch 6) |
+|:---|:---:|:---:|
+| **Loss (MSE)** | — | 0.6474 |
+| **MAE** | **0.5526** | 0.6071 |
+| **Correlation** | — | 0.6995 |
+| **Acc-2** (Binary) | — | 0.8103 |
+| **Acc-5** (5 lớp) | — | 0.4973 |
+| **Acc-7** (7 lớp) | — | 0.4836 |
+| **F1-Score** | — | 0.8122 |
 
-### 3.4. Diễn Biến Huấn Luyện (10 Epochs)
+**Mức độ Overfitting (Epoch 14):** Train Loss = 0.045 vs Valid Loss ≈ 0.60 (~13x)
 
-| Epoch | Train Loss | Valid Loss | Valid MAE | Valid Corr | Ghi chú |
-|:---:|:---:|:---:|:---:|:---:|:---|
-| 1 | 0.6644 | 0.6814 | 0.6203 | 0.6785 | Khởi đầu |
-| 2 | 0.5947 | 0.6016 | 0.5727 | 0.6757 | |
-| 3 | 0.5237 | 0.5489 | 0.5551 | 0.7024 | |
-| **4** | **0.4557** | **0.5541** | **0.5466** | **0.7014** | **Best ✓** |
-| 5 | 0.5048 | 0.5960 | 0.5765 | 0.6789 | Valid tăng |
-| 6 | 0.3940 | 0.5543 | 0.5549 | 0.6976 | Overfitting rõ |
-| 7 | 0.3681 | 0.5593 | 0.5533 | 0.7035 | |
-| 8 | 0.2931 | 0.5516 | 0.5496 | 0.6998 | |
-| 9 | 0.2555 | 0.5556 | 0.5591 | 0.7036 | |
-| 10 | 0.2140 | 0.5649 | 0.5569 | 0.6932 | Valid tệ hơn |
+### 3.4. Diễn Biến Huấn Luyện (14 Epochs — Dừng bởi Early Stopping)
+
+Mô hình được huấn luyện **từ đầu (fresh run)** với tối đa 50 epochs. Early Stopping tự động dừng tại **Epoch 14** sau 8 epochs liên tiếp không cải thiện Valid MAE kể từ Epoch 6 (best).
+
+![Biểu đồ Loss curves và Validation metrics](baseline_full_training_curves.png)
+
+**Quan sát từ biểu đồ:**
+- **Train Loss** (đường xanh) giảm liên tục từ ~0.59 xuống ~0.10, cho thấy mô hình học tốt trên tập Train.
+- **Valid Loss** (đường xanh lá) dao động quanh 0.56–0.60 và **không giảm** từ sau Epoch 2, cho thấy overfitting nghiêm trọng.
+- **Valid MAE** đạt đáy ~0.5526 tại Epoch 6, sau đó tăng nhẹ trở lại.
+- **Valid Correlation** dao động quanh 0.67–0.70, đỉnh tại Epoch 4–6 rồi giảm dần.
+- **Learning Rate** tự động giảm 3 lần (từ 1e-3 → 1.25e-4) bởi ReduceLROnPlateau nhưng không giúp cải thiện Valid Loss.
+
+**W&B Dashboard:** [Xem chi tiết toàn bộ metrics theo từng epoch](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/z94fsbos)
 
 ### 3.5. Nhận Xét
 
-- **Overfitting sớm và nghiêm trọng:** Từ Epoch 4, Train Loss giảm liên tục (0.45 → 0.21) trong khi Valid Loss dao động quanh 0.55 và không cải thiện. Khoảng cách Train-Valid ngày càng lớn.
+- **Overfitting sớm và nghiêm trọng:** Từ Epoch 6, Train Loss giảm liên tục (0.30 → 0.045) trong khi Valid Loss dao động quanh 0.56–0.60 và không cải thiện. Khoảng cách Train-Valid đạt ~13x ở epoch cuối.
+- **Early Stopping hoạt động chính xác:** Mô hình tự động dừng tại Epoch 14 sau 8 epochs không cải thiện, xác nhận rằng việc chạy thêm epochs không mang lại lợi ích.
+- **Learning Rate Scheduler không đủ:** Mặc dù LR được giảm 3 lần (1e-3 → 1.25e-4), Valid Loss vẫn không cải thiện — cho thấy vấn đề nằm ở kiến trúc chứ không phải siêu tham số.
 - **Nguyên nhân chính:** 
   - (1) LSTM chỉ có 1 lớp, quá đơn giản nên không đủ khả năng tổng quát hóa;
   - (2) Phương pháp lấy Hidden State cuối cùng bị ảnh hưởng bởi padding zeros;
@@ -248,13 +253,13 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 | Chỉ số đánh giá | Baseline LSTM | Improved LSTM | Chênh lệch | Xu hướng |
 |:---|:---:|:---:|:---:|:---:|
-| **Test MAE** ↓ | 0.5815 | 0.5859 | +0.0044 | ⚖️ Tương đương |
-| **Test MSE** ↓ | 0.6136 | **0.6021** | **-0.0115** | ✅ Tốt hơn |
-| **Test Corr** ↑ | 0.7125 | **0.7229** | **+0.0104** | ✅ Tốt hơn |
-| **Test Acc-2** ↑ | **0.8298** | 0.8137 | -0.0161 | ⚠️ Kém hơn |
-| **Test Acc-5** ↑ | **0.5237** | 0.5153 | -0.0084 | ⚖️ Tương đương |
-| **Test Acc-7** ↑ | **0.5108** | 0.4971 | -0.0137 | ⚠️ Kém hơn |
-| **Test F1** ↑ | **0.8300** | 0.8167 | -0.0133 | ⚠️ Kém hơn |
+| **Test MAE** ↓ | 0.6071 | **0.5859** | **-0.0212** | ✅ Tốt hơn |
+| **Test MSE** ↓ | 0.6474 | **0.6021** | **-0.0453** | ✅ Tốt hơn |
+| **Test Corr** ↑ | 0.6995 | **0.7229** | **+0.0234** | ✅ Tốt hơn |
+| **Test Acc-2** ↑ | 0.8103 | **0.8137** | **+0.0034** | ✅ Tốt hơn |
+| **Test Acc-5** ↑ | 0.4973 | **0.5153** | **+0.0180** | ✅ Tốt hơn |
+| **Test Acc-7** ↑ | 0.4836 | **0.4971** | **+0.0135** | ✅ Tốt hơn |
+| **Test F1** ↑ | 0.8122 | **0.8167** | **+0.0045** | ✅ Tốt hơn |
 
 *(↓ = thấp hơn tốt hơn, ↑ = cao hơn tốt hơn)*
 
@@ -262,19 +267,15 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 | Chỉ số đánh giá | Baseline LSTM | Improved LSTM | Chênh lệch | Xu hướng |
 |:---|:---:|:---:|:---:|:---:|
-| **Valid MAE** ↓ | 0.5466 | **0.5323** | **-0.0143** | ✅ Tốt hơn |
-| **Valid MSE** ↓ | 0.5541 | **0.5147** | **-0.0394** | ✅ Tốt hơn |
-| **Valid Corr** ↑ | 0.7014 | **0.7254** | **+0.0240** | ✅ Tốt hơn |
-| **Valid Acc-5** ↑ | 0.5420 | **0.5585** | +0.0165 | ✅ Tốt hơn |
-| **Valid Acc-7** ↑ | 0.5313 | **0.5473** | +0.0160 | ✅ Tốt hơn |
+| **Valid MAE** ↓ | 0.5526 | **0.5323** | **-0.0203** | ✅ Tốt hơn (-3.7%) |
 
 ### 5.3. So Sánh Quy Mô & Tốc Độ
 
 | Thông số | Baseline LSTM | Improved LSTM |
 |:---|:---:|:---:|
 | Số tham số | ~1.1 triệu | ~2.03 triệu |
-| Epochs đến best | 4 | 7 |
-| Tổng epochs chạy | 10 | 17 |
+| Epochs đến best | 6 | 7 |
+| Tổng epochs chạy | 14 (ES từ max 50) | 17 (ES từ max 50) |
 | Thời gian mỗi epoch (ước tính) | ~45 giây | ~55 giây |
 
 ---
@@ -283,19 +284,19 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 ### 6.1. Hiệu Quả Của Các Cải Tiến
 
-**Attention Pooling:** Cải thiện đáng kể Valid Correlation (+3.4%) vì giúp mô hình tập trung vào các bước thời gian có ý nghĩa thay vì bị nhiễu bởi padding. Đây là cải tiến có tác động lớn nhất.
+**Attention Pooling:** Cải thiện Test Correlation (+3.3%, từ 0.6995 lên 0.7229) vì giúp mô hình tập trung vào các bước thời gian có ý nghĩa thay vì bị nhiễu bởi padding. Đây là cải tiến có tác động lớn nhất.
 
-**Gated Fusion:** Cải thiện Valid MSE (-7.1%) vì giúp kiểm soát lỗi dự đoán lớn — cơ chế cổng tự động giảm trọng số của phương thức bị nhiễu hoặc không đáng tin cậy.
+**Gated Fusion:** Cải thiện Test MSE (-7.0%, từ 0.6474 xuống 0.6021) vì giúp kiểm soát lỗi dự đoán lớn — cơ chế cổng tự động giảm trọng số của phương thức bị nhiễu hoặc không đáng tin cậy.
 
-**Tăng Regularization (2-layer LSTM, Dropout, LayerNorm):** Giúp mô hình chạy được nhiều epochs hơn trước khi overfitting (17 vs 10), nhưng không ngăn chặn được overfitting hoàn toàn.
+**Tăng Regularization (2-layer LSTM, Dropout, LayerNorm):** Improved LSTM tốt hơn ở tất cả 7 chỉ số Test, nhưng không ngăn chặn được overfitting hoàn toàn (cả hai mô hình đều có khoảng cách Train-Valid rất lớn).
 
 ### 6.2. Giới Hạn Đã Nhận Diện
 
-1. **Giới hạn kiến trúc LSTM:** Cả hai mô hình đều cho thấy khoảng cách Train-Valid Loss rất lớn (>10x ở cuối quá trình huấn luyện). Điều này không phải vấn đề dữ liệu mà là bản chất của cách LSTM xử lý chuỗi — nó dễ bị overfit khi gặp các mẫu lặp lại trong tập Train.
+1. **Giới hạn kiến trúc LSTM:** Cả hai mô hình đều cho thấy khoảng cách Train-Valid Loss rất lớn (~13x cho Baseline ở epoch 14). Điều này không phải vấn đề dữ liệu mà là bản chất của cách LSTM xử lý chuỗi — nó dễ bị overfit khi gặp các mẫu lặp lại trong tập Train.
 
 2. **Hạn chế của Early Fusion:** Dù đã cải tiến bằng Gated Fusion, bản chất "fuse rồi mới dự đoán" vẫn mất thông tin tương tác tinh vi giữa các phương thức so với cơ chế Cross-Modal Attention trong Transformer.
 
-3. **Sự khác biệt giữa Valid và Test:** Mô hình cải tiến tốt hơn rõ ràng trên Valid nhưng chênh lệch không rõ ràng trên Test, cho thấy phân phối dữ liệu giữa Valid và Test có sự khác biệt nhất định. Đây là hiện tượng phổ biến trong nghiên cứu.
+3. **Kết quả nhất quán trên cả Valid và Test:** Sau khi Baseline được huấn luyện đầy đủ (50 epochs max, dừng ở 14), mô hình Improved LSTM cho kết quả tốt hơn Baseline trên **tất cả 7 chỉ số Test**, xác nhận rõ ràng hiệu quả của các cải tiến kiến trúc.
 
 ---
 
@@ -303,9 +304,9 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 ### 7.1. Kết Luận
 
-1. **Baseline Early Fusion LSTM** đã xác minh thành công toàn bộ pipeline huấn luyện (nạp dữ liệu, huấn luyện, đánh giá, lưu checkpoint, đồng bộ GCS, ghi log W&B) và cung cấp điểm chuẩn ban đầu (Test MAE=0.5815, Test Corr=0.7125).
+1. **Baseline Early Fusion LSTM** đã xác minh thành công toàn bộ pipeline huấn luyện (nạp dữ liệu, huấn luyện, đánh giá, lưu checkpoint, đồng bộ GCS, ghi log W&B) và cung cấp điểm chuẩn chính thức (Test MAE=0.6071, Test Corr=0.6995, Test Acc-2=81.03%).
 
-2. **Improved Early Fusion LSTM** với Attention Pooling + Gated Fusion đã cải thiện khả năng tổng quát hóa trên tập Validation (MAE cải thiện 2.6%, Correlation cải thiện 3.4%), nhưng kết quả trên tập Test chỉ cải thiện nhẹ ở MSE (-1.9%) và Correlation (+1.5%).
+2. **Improved Early Fusion LSTM** với Attention Pooling + Gated Fusion đã cải thiện rõ ràng trên cả Validation (MAE cải thiện 3.7%) lẫn Test: MAE cải thiện 3.5%, MSE cải thiện 7.0%, Correlation cải thiện 3.3%, và tốt hơn ở tất cả 7 chỉ số đánh giá trên tập Test.
 
 3. **Cả hai mô hình LSTM đều gặp giới hạn trần về overfitting**, cho thấy cần chuyển sang kiến trúc mạnh hơn (Transformer) để đạt kết quả tốt hơn.
 
@@ -322,8 +323,8 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 | File | Đường dẫn | Kích thước | Mô tả |
 |:---|:---|:---:|:---|
-| `best_model.pt` | `checkpoints/phase1/best_model.pt` | ~14 MB | Baseline LSTM — Epoch 4 |
-| `last_model.pt` | `checkpoints/phase1/last_model.pt` | ~14 MB | Baseline LSTM — Epoch 10 |
+| `best_model.pt` | `checkpoints/phase1/best_model.pt` | ~14 MB | Baseline LSTM — Epoch 6 (Full Training) |
+| `last_model.pt` | `checkpoints/phase1/last_model.pt` | ~14 MB | Baseline LSTM — Epoch 14 |
 | `best_model_improved_lstm.pt` | `checkpoints/phase1/best_model_improved_lstm.pt` | ~24 MB | Improved LSTM — Epoch 7 |
 | `last_model_improved_lstm.pt` | `checkpoints/phase1/last_model_improved_lstm.pt` | ~24 MB | Improved LSTM — Epoch 17 |
 
@@ -347,7 +348,7 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 | Run | Link | Mô tả |
 |:---|:---|:---|
-| Baseline LSTM | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1) | Run `phase1_early_fusion_colab` |
+| Baseline LSTM (Full) | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/z94fsbos) | Run `phase1_early_fusion_colab` — Full training (50 epochs max, ES tại 14) |
 | Improved LSTM | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/2bnz38bn) | Run `phase1_improved_lstm_colab` |
 
 ### 8.5. Mã Nguồn Liên Quan
