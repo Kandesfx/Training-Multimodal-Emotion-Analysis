@@ -45,16 +45,16 @@ def download_and_parse(download_dir: str = "/content/cmu_mosei_labels") -> dict:
     download_path = Path(download_dir)
     download_path.mkdir(parents=True, exist_ok=True)
 
-    print("Downloading CMU-MOSEI labels...")
-    try:
-        label_dataset = md.mmdataset(md.cmu_mosei.labels, str(download_path))
-    except RuntimeError:
-        # Already downloaded
-        csd_file = download_path / "CMU_MOSEI_Labels.csd"
-        if csd_file.exists():
-            print(f"Using cached labels from {csd_file}")
-            label_dataset = md.mmdataset({"labels": str(csd_file)})
-        else:
+    csd_file = download_path / "CMU_MOSEI_Labels.csd"
+    if csd_file.exists():
+        print(f"Using cached labels from {csd_file}")
+        label_dataset = md.mmdataset({"labels": str(csd_file)})
+    else:
+        print("Downloading CMU-MOSEI labels...")
+        try:
+            label_dataset = md.mmdataset(md.cmu_mosei.labels, str(download_path))
+        except Exception as e:
+            print(f"Download failed: {e}")
             raise
 
     # Get the computational sequence
