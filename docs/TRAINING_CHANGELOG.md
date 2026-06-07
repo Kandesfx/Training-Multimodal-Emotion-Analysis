@@ -6,7 +6,8 @@ Tài liệu này ghi lại lịch sử thay đổi, lý do, và kết quả mỗ
 
 ## Run 1: MulT Baseline (2026-06-06)
 
-**Commit:** `110f05e` | **Notebook:** `03_mult_training.ipynb` | **Data:** `aligned_50.pkl`
+**Commit:** `110f05e` | **Notebook:** `03_mult_training.ipynb` | **Data:** `aligned_50.pkl`  
+**wandb:** https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/2jdihi1a
 
 ### Hyperparameters
 | Parameter | Value |
@@ -25,12 +26,12 @@ Tài liệu này ghi lại lịch sử thay đổi, lý do, và kết quả mỗ
 | loss | MSE only |
 | scheduler | ReduceLROnPlateau (factor=0.5, patience=3) |
 
-### Results
+### Test Results
 | Metric | Train | Valid | Test | Target |
 |:---|:---:|:---:|:---:|:---:|
 | Loss | 0.351 | 0.561 | 0.614 | — |
-| MAE | 0.446 | 0.546 | **0.5751** | ≤ 0.5700 |
-| Corr | 0.856 | 0.704 | **0.7196** | ≥ 0.7300 |
+| MAE | 0.446 | 0.546 | **0.5751** | ≤ 0.5700 ❌ |
+| Corr | 0.856 | 0.704 | **0.7196** | ≥ 0.7300 ❌ |
 | Acc-2 | 81.6% | 78.9% | 78.5% | — |
 | Acc-5 | 62.4% | 53.9% | 53.5% | — |
 | Acc-7 | 59.7% | 52.8% | 52.1% | — |
@@ -51,9 +52,10 @@ Tài liệu này ghi lại lịch sử thay đổi, lý do, và kết quả mỗ
 
 ---
 
-## Run 2: Optimization (2026-06-07) — Pending
+## Run 2: MulT Aligned Optimized (2026-06-07)
 
-**Commit:** _pending_ | **Notebook:** `03_mult_training.ipynb` | **Data:** `aligned_50.pkl`
+**Commit:** `f8c19a1` | **Notebook:** `03_mult_training.ipynb` | **Data:** `aligned_50.pkl`  
+**wandb:** https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/6liarpgf
 
 ### Changes from Run 1
 | Parameter | Run 1 | Run 2 | Lý do |
@@ -67,15 +69,66 @@ Tài liệu này ghi lại lịch sử thay đổi, lý do, và kết quả mỗ
 | fusion_dropout | 0.3 | **0.5** | Giảm overfitting tầng fusion head |
 | weight_decay | 1e-3 | **5e-3** | Regularization mạnh hơn 5× |
 
-### Expected Impact
-1. **MSE+L1 loss** → giảm MAE 0.01–0.02 (model trực tiếp minimize absolute error)
-2. **Cosine warmup** → training ổn định hơn, LR không giảm quá sớm
-3. **Tăng regularization** → thu hẹp train/valid gap (60% → ~20–30%)
-
-### Results
-_Chưa chạy — update sau khi train trên Colab_
-
-| Metric | Train | Valid | Test | Target | vs Run 1 |
+### Test Results
+| Metric | Train (ep17) | Valid (ep17) | Test (ep17) | Target | vs Run 1 |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| MAE | — | — | — | ≤ 0.5700 | — |
-| Corr | — | — | — | ≥ 0.7300 | — |
+| Loss | 0.435 | 0.538 | 0.586 | — | ↓ 0.028 |
+| MAE | 0.463 | 0.534 | **0.5687** | ≤ 0.5700 ✅ | ↓ 0.0064 |
+| Corr | 0.834 | 0.706 | **0.7281** | ≥ 0.7300 ❌ | ↑ 0.0085 |
+| Acc-2 | 86.3% | 83.9% | **80.7%** | — | ↑ 2.2% |
+| Acc-5 | 60.8% | 54.5% | 54.2% | — | ↑ 0.7% |
+| Acc-7 | 58.4% | 53.4% | 52.7% | — | ↑ 0.6% |
+| F1 | 0.856 | 0.844 | 0.813 | — | ↑ 0.019 |
+
+**Best epoch:** 17 (early stop at 27, patience=10)
+
+### Analysis
+1. ✅ **MAE = 0.5687 — PASS target ≤ 0.5700** (Run 1 was 0.5751)
+2. ❌ **Corr = 0.7281 — chỉ thiếu 0.0019** so với target 0.7300
+3. ✅ **Overfitting giảm** — train/valid loss gap ~22% (vs Run 1's 60%)
+4. ✅ **Cosine warmup hiệu quả** — best epoch 17 vs 11, model converge tốt hơn
+5. ✅ **Combined loss** trực tiếp cải thiện MAE đúng như dự đoán
+
+---
+
+## Run 3: MulT Unaligned (2026-06-07)
+
+**Commit:** `f8c19a1` | **Notebook:** `04_mult_unaligned_training.ipynb` | **Data:** `unaligned_50.pkl`
+
+### Hyperparameters
+Same as Run 2 (mse_l1, cosine_warmup, dropout 0.2/0.5, weight_decay 5e-3)  
++ Data: unaligned_50.pkl (audio/vision seq_len=500, text seq_len=50)
+
+### Validation Results (best epoch 18)
+| Metric | Train (ep18) | Valid (ep18) |
+|:---|:---:|:---:|
+| Loss | 0.423 | 0.535 |
+| MAE | 0.460 | **0.5327** |
+| Corr | 0.838 | **0.7108** |
+| Acc-2 | 85.0% | 82.4% |
+| Acc-5 | 61.9% | 54.5% |
+| Acc-7 | 59.6% | 53.4% |
+
+**Best epoch:** 18 (early stop at 28, patience=10)
+
+### Analysis
+1. ✅ **Valid MAE = 0.5327 — vượt target rõ ràng** (best MAE trong tất cả models)
+2. ❌ **Valid Corr = 0.7108 — thấp hơn aligned** (0.7108 vs 0.7281)
+3. ✅ **Overfitting kiểm soát tốt** — train/valid gap ~26%
+4. ⚠️ Test metrics chưa có trong GCS history (nằm trong Colab cell output)
+
+---
+
+## Tổng hợp tất cả models
+
+| Model | Test MAE ↓ | Test Corr ↑ | Test Acc-2 ↑ | Best Epoch |
+|:---|:---:|:---:|:---:|:---:|
+| Baseline LSTM | 0.6071 | 0.6995 | 81.0% | — |
+| Improved LSTM | 0.5859 | 0.7229 | 81.4% | — |
+| MulT Aligned Run 1 | 0.5751 | 0.7196 | 78.5% | 11 |
+| **MulT Aligned Run 2** | **0.5687** | **0.7281** | **80.7%** | 17 |
+| MulT Unaligned | 0.5327* | 0.7108* | 82.4%* | 18 |
+
+*\* Valid metrics (test metrics pending)*
+
+**Target: MAE ≤ 0.5700 ✅ (Run 2), Corr ≥ 0.7300 ❌ (thiếu 0.0019)**
