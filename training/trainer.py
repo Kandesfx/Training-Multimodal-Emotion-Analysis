@@ -21,6 +21,7 @@ from tqdm import tqdm
 
 from training.config_phase1 import Phase1Config
 from training.evaluator import compute_metrics, metrics_to_row
+from training.evaluator_emotion import compute_emotion_metrics, emotion_metrics_to_row
 
 
 class _CombinedMSEL1Loss(nn.Module):
@@ -59,6 +60,7 @@ class Phase1Trainer:
         )
         self.scheduler = self._build_scheduler()
         self.scheduler_type = self.config.training.scheduler_type
+        self.task_type = self.config.training.task_type  # "sentiment" or "emotion"
         self.use_amp = self.config.training.use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
         self.history_path = self.config.paths.logs_dir / "history.csv"
@@ -91,7 +93,9 @@ class Phase1Trainer:
             return nn.MSELoss()
         if loss_type == "mse_l1":
             return _CombinedMSEL1Loss(l1_weight=self.config.training.l1_weight)
-        raise ValueError(f"Unsupported loss_type: {loss_type!r}. Use 'mse' or 'mse_l1'.")
+        if loss_type == "bce":
+            return nn.BCEWithLogitsLoss()
+        raise ValueError(f"Unsupported loss_type: {loss_type!r}. Use 'mse', 'mse_l1', or 'bce'.")
 
     def _build_scheduler(self):
         """Build LR scheduler based on config.training.scheduler_type."""
@@ -292,7 +296,13 @@ class Phase1Trainer:
         y_pred = np.concatenate(all_preds, axis=0)
         y_true = np.concatenate(all_labels, axis=0)
         avg_loss = total_loss / len(data_loader.dataset)
-        metrics = compute_metrics(y_true, y_pred)
+
+        # Dispatch to correct evaluator based on task type
+        if self.task_type == "emotion":
+            metrics = compute_emotion_metrics(y_true, y_pred)
+        else:
+            metrics = compute_metrics(y_true, y_pred)
+
         return avg_loss, metrics
 
     def evaluate_and_save(self, data_loader, split: str = "test", epoch: int = 0) -> dict[str, Any]:

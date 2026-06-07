@@ -28,9 +28,11 @@ class MOSEIAlignedDataset(Dataset):
         self.vision = self._prepare_array(split_data["vision"])
         self.labels = self._prepare_labels(split_data["regression_labels"])
         self.classification_labels = split_data.get("classification_labels")
+        self.emotion_labels = self._prepare_emotion_labels(split_data.get("emotion_labels"))
         self.sample_ids = split_data.get("id", [])
         self.raw_text = split_data.get("raw_text", [])
         self.annotations = split_data.get("annotations", [])
+        self.task_type = self.config.training.task_type  # "sentiment" or "emotion"
 
         self._validate_shapes()
 
@@ -54,6 +56,14 @@ class MOSEIAlignedDataset(Dataset):
         if self.config.data.cast_float32:
             arr = arr.astype(np.float32, copy=False)
         return arr.reshape(-1)
+
+    def _prepare_emotion_labels(self, labels) -> np.ndarray | None:
+        if labels is None:
+            return None
+        arr = np.asarray(labels)
+        if self.config.data.cast_float32:
+            arr = arr.astype(np.float32, copy=False)
+        return arr  # shape: (N, 6)
 
     def _validate_shapes(self) -> None:
         n = len(self.labels)
@@ -80,11 +90,17 @@ class MOSEIAlignedDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | str]:
+        # Select label based on task type
+        if self.task_type == "emotion" and self.emotion_labels is not None:
+            label = torch.from_numpy(self.emotion_labels[index])  # (6,)
+        else:
+            label = torch.tensor(self.labels[index], dtype=torch.float32)  # scalar
+
         return {
             "text": torch.from_numpy(self.text[index]),
             "audio": torch.from_numpy(self.audio[index]),
             "vision": torch.from_numpy(self.vision[index]),
-            "label": torch.tensor(self.labels[index], dtype=torch.float32),
+            "label": label,
             "sample_id": self.sample_ids[index] if index < len(self.sample_ids) else str(index),
         }
 
@@ -174,6 +190,11 @@ class MOSEIUnalignedDataset(Dataset):
 
         self.sample_ids: list = list(d.get("id", []))
 
+        # Emotion labels (optional — only present after merge_emotions_to_pkl.py)
+        emo_raw = d.get("emotion_labels")
+        self.emotion_labels = emo_raw.astype(np.float32, copy=False) if emo_raw is not None else None
+        self.task_type = self.config.training.task_type
+
         self._validate_shapes()
 
     # ------------------------------------------------------------------
@@ -217,13 +238,19 @@ class MOSEIUnalignedDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | str]:
+        # Select label based on task type
+        if self.task_type == "emotion" and self.emotion_labels is not None:
+            label = torch.from_numpy(self.emotion_labels[index])  # (6,)
+        else:
+            label = torch.tensor(self.labels[index], dtype=torch.float32)  # scalar
+
         return {
             "text": torch.from_numpy(self.text[index]),
             "audio": torch.from_numpy(self.audio[index]),
             "vision": torch.from_numpy(self.vision[index]),
             "audio_len": torch.tensor(self.audio_lengths[index], dtype=torch.long),
             "vision_len": torch.tensor(self.vision_lengths[index], dtype=torch.long),
-            "label": torch.tensor(self.labels[index], dtype=torch.float32),
+            "label": label,
             "sample_id": self.sample_ids[index] if index < len(self.sample_ids) else str(index),
         }
 

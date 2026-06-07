@@ -242,6 +242,7 @@ class MulTRegressor(nn.Module):
 
         # --- 7. Enhanced Fusion head ---
         fusion_input_dim = d * 3
+        self.output_dim = config.output_dim
         self.regressor = nn.Sequential(
             nn.Linear(fusion_input_dim, config.fusion_hidden_dim),
             nn.LayerNorm(config.fusion_hidden_dim),
@@ -345,4 +346,6 @@ class MulTRegressor(nn.Module):
 
         # 7. Concatenate and predict
         fused = torch.cat([t_repr, a_repr, v_repr], dim=1)  # (B, 3*d)
-        return self.regressor(fused).squeeze(-1)              # (B,)
+        out = self.regressor(fused)                           # (B, output_dim)
+        # Squeeze for regression (output_dim=1), keep shape for multi-label (output_dim=6)
+        return out.squeeze(-1) if self.output_dim == 1 else out

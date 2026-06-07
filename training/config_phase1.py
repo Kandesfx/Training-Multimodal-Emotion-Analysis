@@ -125,6 +125,9 @@ class Phase1TrainingConfig:
     warmup_epochs: int = 5                 # linear warmup epochs (cosine_warmup only)
     min_lr: float = 1e-6                   # minimum LR floor (cosine_warmup only)
 
+    # --- Task ---
+    task_type: str = "sentiment"           # "sentiment" (regression, output_dim=1) or "emotion" (multi-label, output_dim=6)
+
 
 @dataclass
 class Phase1DataConfig:
