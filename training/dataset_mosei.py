@@ -34,6 +34,24 @@ class MOSEIAlignedDataset(Dataset):
         self.annotations = split_data.get("annotations", [])
         self.task_type = self.config.training.task_type  # "sentiment" or "emotion"
 
+        # Apply filtering for emotion mode to ignore unmatched samples (keep only matched samples)
+        if self.task_type == "emotion" and "emotion_matched_mask" in split_data:
+            mask = np.asarray(split_data["emotion_matched_mask"], dtype=bool)
+            self.text = self.text[mask]
+            self.audio = self.audio[mask]
+            self.vision = self.vision[mask]
+            self.labels = self.labels[mask]
+            if self.classification_labels is not None:
+                self.classification_labels = np.asarray(self.classification_labels)[mask]
+            if self.emotion_labels is not None:
+                self.emotion_labels = self.emotion_labels[mask]
+            if self.sample_ids is not None and len(self.sample_ids) > 0:
+                self.sample_ids = [self.sample_ids[idx] for idx, m in enumerate(mask) if m]
+            if self.raw_text is not None and len(self.raw_text) > 0:
+                self.raw_text = [self.raw_text[idx] for idx, m in enumerate(mask) if m]
+            if self.annotations is not None and len(self.annotations) > 0:
+                self.annotations = [self.annotations[idx] for idx, m in enumerate(mask) if m]
+
         self._validate_shapes()
 
     @staticmethod
@@ -194,6 +212,20 @@ class MOSEIUnalignedDataset(Dataset):
         emo_raw = d.get("emotion_labels")
         self.emotion_labels = emo_raw.astype(np.float32, copy=False) if emo_raw is not None else None
         self.task_type = self.config.training.task_type
+
+        # Apply filtering for emotion mode to ignore unmatched samples (keep only matched samples)
+        if self.task_type == "emotion" and "emotion_matched_mask" in d:
+            mask = np.asarray(d["emotion_matched_mask"], dtype=bool)
+            self.text = self.text[mask]
+            self.audio = self.audio[mask]
+            self.vision = self.vision[mask]
+            self.labels = self.labels[mask]
+            self.audio_lengths = self.audio_lengths[mask]
+            self.vision_lengths = self.vision_lengths[mask]
+            if self.emotion_labels is not None:
+                self.emotion_labels = self.emotion_labels[mask]
+            if self.sample_ids is not None and len(self.sample_ids) > 0:
+                self.sample_ids = [self.sample_ids[idx] for idx, m in enumerate(mask) if m]
 
         self._validate_shapes()
 

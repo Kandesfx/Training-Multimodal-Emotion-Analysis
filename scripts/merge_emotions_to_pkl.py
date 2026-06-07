@@ -79,6 +79,7 @@ def merge_into_pkl(pkl_path: str, emotion_dict: dict, output_path: str | None = 
         n = len(sample_ids)
 
         emotion_labels = np.zeros((n, 6), dtype=np.float32)
+        matched_mask = np.zeros(n, dtype=bool)
         matched = 0
         unmatched_ids = []
 
@@ -86,12 +87,14 @@ def merge_into_pkl(pkl_path: str, emotion_dict: dict, output_path: str | None = 
             emo = try_match_id(sid, emotion_dict)
             if emo is not None:
                 emotion_labels[i] = [emo[col] for col in EMOTION_COLS]
+                matched_mask[i] = True
                 matched += 1
             else:
                 unmatched_ids.append(sid)
 
         coverage = matched / n * 100 if n > 0 else 0
         split_data["emotion_labels"] = emotion_labels
+        split_data["emotion_matched_mask"] = matched_mask
 
         print(f"  {split}: {matched}/{n} matched ({coverage:.1f}%)")
         if unmatched_ids and len(unmatched_ids) <= 10:
