@@ -61,6 +61,12 @@ class Phase1Trainer:
         self.scheduler = self._build_scheduler()
         self.scheduler_type = self.config.training.scheduler_type
         self.task_type = self.config.training.task_type  # "sentiment" or "emotion"
+        if self.task_type == "emotion":
+            self.metric_for_best = "mean_f1"
+            self.maximize_metric = True
+        else:
+            self.metric_for_best = self.config.training.metric_for_best
+            self.maximize_metric = self.config.training.maximize_metric
         self.use_amp = self.config.training.use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
         self.history_path = self.config.paths.logs_dir / "history.csv"
@@ -152,7 +158,7 @@ class Phase1Trainer:
         self.set_seed(self.config.training.seed)
 
         start_epoch = 1
-        best_metric = float("inf") if not self.config.training.maximize_metric else float("-inf")
+        best_metric = float("inf") if not self.maximize_metric else float("-inf")
         epochs_without_improvement = 0
         history_rows = self._load_existing_history_count() if self.config.training.resume_from_checkpoint else 0
         best_state: dict[str, Any] | None = None
@@ -182,8 +188,8 @@ class Phase1Trainer:
             else:
                 self.scheduler.step()
 
-            current_metric = valid_metrics[self.config.training.metric_for_best]
-            improved = current_metric > best_metric if self.config.training.maximize_metric else current_metric < best_metric
+            current_metric = valid_metrics[self.metric_for_best]
+            improved = current_metric > best_metric if self.maximize_metric else current_metric < best_metric
             if improved:
                 best_metric = current_metric
                 epochs_without_improvement = 0
@@ -216,9 +222,14 @@ class Phase1Trainer:
             self._upload_to_gcs(self.last_checkpoint_path)
             last_completed_epoch = epoch
 
-            train_row = metrics_to_row("train", epoch, train_eval_loss, train_metrics)
-            train_row["train_step_loss"] = float(train_loss)
-            valid_row = metrics_to_row("valid", epoch, valid_loss, valid_metrics)
+            if self.task_type == "emotion":
+                train_row = emotion_metrics_to_row("train", epoch, train_eval_loss, train_metrics)
+                train_row["train_step_loss"] = float(train_loss)
+                valid_row = emotion_metrics_to_row("valid", epoch, valid_loss, valid_metrics)
+            else:
+                train_row = metrics_to_row("train", epoch, train_eval_loss, train_metrics)
+                train_row["train_step_loss"] = float(train_loss)
+                valid_row = metrics_to_row("valid", epoch, valid_loss, valid_metrics)
             self._append_history([train_row, valid_row])
             self._upload_to_gcs(self.history_path)
             history_rows += 2
@@ -307,7 +318,10 @@ class Phase1Trainer:
 
     def evaluate_and_save(self, data_loader, split: str = "test", epoch: int = 0) -> dict[str, Any]:
         loss, metrics = self.evaluate(data_loader, split=split, epoch=epoch)
-        row = metrics_to_row(split, epoch, loss, metrics)
+        if self.task_type == "emotion":
+            row = emotion_metrics_to_row(split, epoch, loss, metrics)
+        else:
+            row = metrics_to_row(split, epoch, loss, metrics)
         self._append_history([row])
         return row
 
@@ -315,6 +329,10 @@ class Phase1Trainer:
         self.model.train(training)
         total_loss = 0.0
         progress = tqdm(data_loader, desc=f"Epoch {epoch} {'train' if training else 'eval'}", leave=False)
+        accum_steps = self.config.training.gradient_accumulation_steps
+
+        if training:
+            self.optimizer.zero_grad(set_to_none=True)
 
         for step, batch in enumerate(progress, start=1):
             text = batch["text"].to(self.device, non_blocking=True)
@@ -326,39 +344,47 @@ class Phase1Trainer:
             audio_lengths = batch["audio_len"].to(self.device, non_blocking=True) if "audio_len" in batch else None
             vision_lengths = batch["vision_len"].to(self.device, non_blocking=True) if "vision_len" in batch else None
 
-            if training:
-                self.optimizer.zero_grad(set_to_none=True)
-
             with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                 preds = self.model(
                     text=text, audio=audio, vision=vision,
                     audio_lengths=audio_lengths, vision_lengths=vision_lengths,
                 )
-                loss = self.criterion(preds, labels)
+                raw_loss = self.criterion(preds, labels)
+                loss = raw_loss / accum_steps
 
             if training:
                 # Guard: skip batch if loss is NaN (prevents poisoning optimizer state)
-                if not torch.isfinite(loss):
-                    print(f"\n  [WARNING] Non-finite loss ({loss.item()}) at step {step} — skipping batch")
-                    self.optimizer.zero_grad(set_to_none=True)
+                if not torch.isfinite(raw_loss):
+                    print(f"\n  [WARNING] Non-finite loss ({raw_loss.item()}) at step {step} — skipping batch")
                     continue
 
                 self.scaler.scale(loss).backward()
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.max_grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
 
-            total_loss += loss.item() * labels.size(0)
+                if step % accum_steps == 0 or step == len(data_loader):
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.training.max_grad_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad(set_to_none=True)
+
+            total_loss += raw_loss.item() * labels.size(0)
             if step % self.config.training.log_interval == 0 or step == len(data_loader):
-                progress.set_postfix(loss=f"{loss.item():.4f}")
+                progress.set_postfix(loss=f"{raw_loss.item():.4f}")
 
         return total_loss / len(data_loader.dataset)
 
     def _append_history(self, rows: list[dict[str, Any]]) -> None:
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         file_exists = self.history_path.exists()
-        fieldnames = ["split", "epoch", "loss", "mae", "mse", "corr", "acc2", "acc5", "acc7", "f1", "train_step_loss"]
+        if self.task_type == "emotion":
+            fieldnames = [
+                "split", "epoch", "loss", "train_step_loss",
+                "mean_f1", "mean_acc", "mean_mae",
+                "happy_f1", "sad_f1", "angry_f1",
+                "surprise_f1", "disgust_f1", "fear_f1",
+            ]
+        else:
+            fieldnames = ["split", "epoch", "loss", "mae", "mse", "corr", "acc2", "acc5", "acc7", "f1", "train_step_loss"]
         with self.history_path.open("a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not file_exists:
