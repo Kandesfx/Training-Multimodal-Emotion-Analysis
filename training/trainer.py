@@ -264,6 +264,7 @@ class Phase1Trainer:
 
         if self.config.wandb.enable:
             import wandb
+            wandb.unwatch(self.model)
             wandb.finish()
 
         return summary
