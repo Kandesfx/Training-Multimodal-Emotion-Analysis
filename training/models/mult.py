@@ -95,7 +95,7 @@ class CrossModalAttentionLayer(nn.Module):
         self.norm1 = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, ffn_dim),
-            nn.ReLU(),
+            nn.GELU(),                       # P1: ReLU → GELU (smoother gradient)
             nn.Dropout(dropout),
             nn.Linear(ffn_dim, d_model),
             nn.Dropout(dropout),
@@ -127,6 +127,43 @@ class CrossModalAttentionLayer(nn.Module):
 # ---------------------------------------------------------------------------
 # Cross-Modal Transformer Block (stacks N cross-attention layers)
 # ---------------------------------------------------------------------------
+
+class StochasticCrossModalTransformerBlock(nn.Module):
+    """CrossModalTransformerBlock with stochastic depth (LayerDrop).
+
+    Randomly skips entire layers during training to improve generalization.
+    Inspired by "Deep Networks with Stochastic Depth" (Huang et al., 2016).
+    Inherently a form of ensemble averaging — each forward pass uses a
+    different depth, so the model learns to be robust to depth variation.
+
+    Always keeps layer 0 (the most important one).
+    Layers 1..N-1 are kept with probability `survival`.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        num_layers: int,
+        ffn_dim: int,
+        dropout: float = 0.1,
+        survival_prob: float = 0.8,
+    ):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            CrossModalAttentionLayer(d_model, num_heads, ffn_dim, dropout)
+            for _ in range(num_layers)
+        ])
+        self.survival_prob = survival_prob
+
+    def forward(self, target: Tensor, source: Tensor, key_padding_mask: Tensor | None = None) -> Tensor:
+        for i, layer in enumerate(self.layers):
+            if self.training and i > 0:
+                if torch.rand(1, device=target.device).item() >= self.survival_prob:
+                    continue
+            target = layer(target, source, key_padding_mask=key_padding_mask)
+        return target
+
 
 class CrossModalTransformerBlock(nn.Module):
     """Stack of N CrossModalAttentionLayers for one (target ← source) pair."""
@@ -173,7 +210,7 @@ class SelfAttentionEncoder(nn.Module):
             dim_feedforward=ffn_dim,
             dropout=dropout,
             batch_first=True,
-            activation="relu",
+            activation="gelu",             # P1: ReLU → GELU
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
@@ -209,7 +246,15 @@ class MulTRegressor(nn.Module):
         ffn = config.ffn_dim
         drop = config.attn_dropout
 
-        # --- 1. Projection layers ---
+        # --- 1. Projection layers + Pre-LayerNorm (Liu et al., 2020) ---
+        # Applying LayerNorm before the projection instead of after improves
+        # training stability for deep Transformers (Pre-LN > Post-LN).
+        # Pre-LN places the normalization inside the residual branch's weight path,
+        # eliminating the need for a warm-up schedule.
+        self.proj_text_ln = nn.LayerNorm(config.text_input_dim)
+        self.proj_audio_ln = nn.LayerNorm(config.audio_input_dim)
+        self.proj_vision_ln = nn.LayerNorm(config.vision_input_dim)
+
         self.proj_text = nn.Linear(config.text_input_dim, d)
         self.proj_audio = nn.Linear(config.audio_input_dim, d)
         self.proj_vision = nn.Linear(config.vision_input_dim, d)
@@ -217,13 +262,16 @@ class MulTRegressor(nn.Module):
         # --- 2. Positional encoding ---
         self.pe = PositionalEncoding(d, dropout=drop)
 
-        # --- 3. Cross-Modal Attention blocks (6 flows) ---
-        self.cross_t_a = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
-        self.cross_t_v = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
-        self.cross_a_t = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
-        self.cross_a_v = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
-        self.cross_v_t = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
-        self.cross_v_a = CrossModalTransformerBlock(d, h, n_cross, ffn, drop)
+        # --- 3. Cross-Modal Attention blocks (6 flows) with Stochastic Depth ---
+        # survival_prob=0.8: layers 1-3 are kept with 80% probability during training.
+        # This acts as an implicit ensemble over model depths.
+        sd = getattr(config, "stochastic_depth_survival", 0.8)
+        self.cross_t_a = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
+        self.cross_t_v = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
+        self.cross_a_t = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
+        self.cross_a_v = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
+        self.cross_v_t = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
+        self.cross_v_a = StochasticCrossModalTransformerBlock(d, h, n_cross, ffn, drop, survival_prob=sd)
 
         # --- 4. Self-Attention Transformer Encoders ---
         self.self_attn_text = SelfAttentionEncoder(d, h, n_self, ffn, drop)
@@ -240,16 +288,22 @@ class MulTRegressor(nn.Module):
         self.audio_ln = nn.LayerNorm(d)
         self.vision_ln = nn.LayerNorm(d)
 
-        # --- 7. Enhanced Fusion head ---
+        # --- 7. Enhanced Fusion head with GELU and residual ---
+        # Structure: concat → LN → GELU → FC → dropout → FC → residual → FC → output
+        # The residual connection (identity shortcut) around the first two FC layers
+        # lets gradients flow directly to the concatenated modality features,
+        # preserving low-level modality information while learning high-level fusion.
         fusion_input_dim = d * 3
         self.output_dim = config.output_dim
-        self.regressor = nn.Sequential(
+        self.fusion_ln = nn.LayerNorm(fusion_input_dim)
+        self.fusion_proj = nn.Sequential(
             nn.Linear(fusion_input_dim, config.fusion_hidden_dim),
-            nn.LayerNorm(config.fusion_hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),                       # P1: ReLU → GELU
             nn.Dropout(config.fusion_dropout),
+        )
+        self.regressor = nn.Sequential(
             nn.Linear(config.fusion_hidden_dim, config.fusion_hidden_dim // 2),
-            nn.ReLU(),
+            nn.GELU(),                       # P1: ReLU → GELU
             nn.Dropout(config.fusion_dropout * 0.5),
             nn.Linear(config.fusion_hidden_dim // 2, config.output_dim),
         )
@@ -309,10 +363,11 @@ class MulTRegressor(nn.Module):
         else:
             v_mask = self._ensure_valid_mask(vision.abs().sum(dim=-1) > 1e-6) # (B, V)
 
-        # 1. Project to d_model
-        t = self.pe(self.proj_text(text))       # (B, T, d)
-        a = self.pe(self.proj_audio(audio))     # (B, A, d)
-        v = self.pe(self.proj_vision(vision))   # (B, V, d)
+        # 1. Project to d_model (with Pre-LN)
+        # Pre-LN: normalize → project → PE. More stable than post-normalization.
+        t = self.pe(self.proj_text(self.proj_text_ln(text)))       # (B, T, d)
+        a = self.pe(self.proj_audio(self.proj_audio_ln(audio)))     # (B, A, d)
+        v = self.pe(self.proj_vision(self.proj_vision_ln(vision)))   # (B, V, d)
 
         # 2. Cross-modal attention (6 flows with source key_padding_mask)
         #    Q and K/V can have different sequence lengths — nn.MultiheadAttention
@@ -344,8 +399,10 @@ class MulTRegressor(nn.Module):
         a_repr = self.audio_ln(a_repr)
         v_repr = self.vision_ln(v_repr)
 
-        # 7. Concatenate and predict
+        # 7. Concatenate and predict with enhanced fusion
         fused = torch.cat([t_repr, a_repr, v_repr], dim=1)  # (B, 3*d)
-        out = self.regressor(fused)                           # (B, output_dim)
+        fused = self.fusion_ln(fused)                         # Pre-normalize (helps training)
+        fused = self.fusion_proj(fused)                       # (B, fusion_hidden_dim)
+        out = self.regressor(fused)                            # (B, output_dim)
         # Squeeze for regression (output_dim=1), keep shape for multi-label (output_dim=6)
         return out.squeeze(-1) if self.output_dim == 1 else out

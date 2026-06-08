@@ -40,11 +40,21 @@ def apply_overrides(cfg: Phase1Config, args: argparse.Namespace) -> Phase1Config
     return cfg
 
 
+def _sync_mult_stochastic_depth(cfg: Phase1Config) -> None:
+    """Sync stochastic_depth_survival from training config to MulT model config.
+
+    This lets the training config control the value while keeping a sensible
+    default (0.8) in Phase1MulTModelConfig for standalone use.
+    """
+    cfg.mult_model.stochastic_depth_survival = cfg.training.stochastic_depth_survival
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     cfg = apply_overrides(default_config, args)
     cfg.setup()
+    _sync_mult_stochastic_depth(cfg)
 
     dataloaders = create_dataloaders(config=cfg, pkl_path=cfg.paths.mosei_pkl)
     
