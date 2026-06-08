@@ -16,7 +16,8 @@
 5. [So Sánh Đối Chiếu Hai Mô Hình](#5-so-sánh-đối-chiếu-hai-mô-hình)
 6. [Phân Tích & Đánh Giá](#6-phân-tích--đánh-giá)
 7. [Kết Luận & Hướng Phát Triển](#7-kết-luận--hướng-phát-triển)
-8. [Tài Nguyên Đã Lưu Trữ](#8-tài-nguyên-đã-lưu-trữ)
+8. [Thí Nghiệm 3: MulT - Nhận Diện Đa Cảm Xúc (6-Emotion)](#8-thí-nghiệm-3-mult---nhận-diện-đa-cảm-xúc-6-emotion)
+9. [Tài Nguyên Đã Lưu Trữ](#9-tài-nguyên-đã-lưu-trữ)
 
 ---
 
@@ -304,22 +305,72 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 
 ### 7.1. Kết Luận
 
-1. **Baseline Early Fusion LSTM** đã xác minh thành công toàn bộ pipeline huấn luyện (nạp dữ liệu, huấn luyện, đánh giá, lưu checkpoint, đồng bộ GCS, ghi log W&B) và cung cấp điểm chuẩn chính thức (Test MAE=0.6071, Test Corr=0.6995, Test Acc-2=81.03%).
+1. **Baseline Early Fusion LSTM** đã xác minh thành công toàn bộ pipeline huấn luyện và cung cấp điểm chuẩn chính thức (Test MAE=0.6071, Test Corr=0.6995, Test Acc-2=81.03%).
 
-2. **Improved Early Fusion LSTM** với Attention Pooling + Gated Fusion đã cải thiện rõ ràng trên cả Validation (MAE cải thiện 3.7%) lẫn Test: MAE cải thiện 3.5%, MSE cải thiện 7.0%, Correlation cải thiện 3.3%, và tốt hơn ở tất cả 7 chỉ số đánh giá trên tập Test.
+2. **Improved Early Fusion LSTM** với Attention Pooling + Gated Fusion đã cải thiện rõ ràng hiệu năng trên tất cả 7 chỉ số Test, tuy nhiên vẫn gặp giới hạn trần về overfitting do tính chất của LSTM.
 
-3. **Cả hai mô hình LSTM đều gặp giới hạn trần về overfitting**, cho thấy cần chuyển sang kiến trúc mạnh hơn (Transformer) để đạt kết quả tốt hơn.
+3. **Mô hình MulT (Multimodal Transformer)** đã được đưa vào huấn luyện thực tế cho tác vụ nhận diện đa nhãn cảm xúc (Thí nghiệm 3) và đạt các kết quả ban đầu khả quan, mở ra cơ hội tối ưu hóa sâu hơn qua việc tinh chỉnh ngưỡng phân loại.
 
-### 7.2. Hướng Phát Triển — Phase 1 Nâng Cao
+### 7.2. Hướng Phát Triển Tiếp Theo
 
-- **Mô hình MulT (Multimodal Transformer):** Sử dụng cơ chế Cross-Modal Attention cho phép mỗi phương thức "nhìn" trực tiếp vào thông tin của phương thức khác, thay vì chỉ hợp nhất ở cuối. Kỳ vọng cải thiện đáng kể cả MAE và Correlation.
-- **Code đã sẵn sàng:** File `training/models/mult.py` và cấu hình `Phase1MulTModelConfig` đã được triển khai, chỉ cần tạo notebook Colab và chạy huấn luyện.
+- **Tinh chỉnh ngưỡng quyết định (Threshold Tuning):** Áp dụng quét tìm ngưỡng tối ưu cho từng lớp cảm xúc để khắc phục vấn đề mất cân bằng nhãn.
+- **Huấn luyện tiếng Việt (Phase 2):** Sử dụng các mô hình pre-trained này để fine-tune trên tập dữ liệu tiếng Việt sử dụng PhoBERT cho phương thức văn bản.
 
 ---
 
-## 8. Tài Nguyên Đã Lưu Trữ
+## 8. Thí Nghiệm 3: MulT (Multimodal Transformer) - Nhận Diện Đa Cảm Xúc (6-Emotion)
 
-### 8.1. Checkpoints Mô Hình (Local)
+### 8.1. Thiết Lập Thí Nghiệm
+* **Mô hình:** Multimodal Transformer (MulT) sử dụng cơ chế Cross-Modal Attention để chiếu tương tác trực tiếp giữa các phương thức.
+* **Task:** Multi-label Classification (Phân loại đa nhãn độc lập) cho 6 cảm xúc: `happy`, `sad`, `angry`, `surprise`, `disgust`, `fear`.
+* **Loss Function:** `BCEWithLogitsLoss`
+* **Dữ liệu:** `aligned_50.pkl` (loại bỏ ~23% mẫu không khớp nhãn cảm xúc gốc từ CMU SDK).
+
+### 8.2. Siêu Tham Số
+* **Kích thước ẩn (d_model):** 64
+* **Số đầu chú ý (num_heads):** 4
+* **Số lớp Cross-Attention:** 4
+* **Số lớp Self-Attention:** 2
+* **Tỷ lệ Dropout:** Attention Dropout = 0.2, Fusion MLP Dropout = 0.5
+* **Bộ tối ưu:** AdamW (lr=1e-4, weight_decay=5e-3)
+* **Lịch trình LR:** Cosine Annealing với 5 epochs Warmup
+* **Kích thước Batch:** 32 (sử dụng Gradient Accumulation)
+* **Số Epochs:** 29 (dừng sớm bởi Early Stopping, patience=10)
+
+### 8.3. Kết Quả Huấn Luyện (Validation - Epoch 29)
+* **Loss (BCE):** 0.1314
+* **Mean F1:** 0.2064 (Best Metric: 0.2117)
+* **Mean Accuracy:** 0.3513
+* **Mean MAE:** 1.4222
+
+**Hiệu năng chi tiết từng cảm xúc (F1-score):**
+* **Happy F1:** 0.4709 (Tốt nhất)
+* **Sad F1:** 0.2673
+* **Angry F1:** 0.1949
+* **Disgust F1:** 0.1730
+* **Surprise F1:** 0.0977 (Thấp)
+* **Fear F1:** 0.0348 (Rất thấp)
+
+### 8.4. Phân Tích & Đánh Giá Chỉ Số
+1. **Hiện tượng Overfitting (Quá khớp):** 
+   * Đồ thị `train_loss` giảm liên tục rất tốt từ ~0.185 xuống `0.108` ở epoch 29.
+   * Tuy nhiên, `valid_loss` đạt đáy ở **epoch 9** (~`0.122`), sau đó đi ngang và có xu hướng tăng dần lên `0.131`. Đây là dấu hiệu overfitting cổ điển: mô hình bắt đầu học thuộc lòng tập train thay vì tổng quát hóa tốt.
+2. **Sự mất cân bằng hiệu năng nghiêm trọng (Class Imbalance):**
+   * Các cảm xúc có nhiều dữ liệu như `happy` (F1 ~0.47) và `sad` (F1 ~0.27) đạt kết quả vượt trội.
+   * Các cảm xúc hiếm như `surprise` (F1 ~0.09) và đặc biệt là `fear` (F1 ~0.03) có hiệu năng cực kỳ kém do tần suất xuất hiện quá thấp trong bộ dữ liệu CMU-MOSEI.
+3. **Biến động lớn của Accuracy:**
+   * Chỉ số `valid_mean_acc` dao động răng cưa rất mạnh (từ 12.5% đến 38%). Điều này xảy ra do mô hình đang sử dụng một **ngưỡng quyết định cứng duy nhất (0.5)** cho tất cả các lớp cảm xúc, khiến việc phân loại rất nhạy cảm với các biến đổi nhỏ ở đầu ra.
+
+### 8.5. Đề Xuất Cải Tiến Kỹ Thuật
+1. **Class-specific Threshold Tuning (Tìm ngưỡng quyết định riêng):** Quét tìm ngưỡng phân loại tối ưu (ví dụ từ 0.1 đến 0.9) riêng biệt cho từng lớp cảm xúc trên tập Validation thay vì dùng chung ngưỡng 0.5. Giải pháp này dự kiến cải thiện đáng kể F1-score cho các lớp ít dữ liệu như `fear` và `surprise` mà không cần huấn luyện lại.
+2. **Weighted BCE Loss (`pos_weight`):** Áp dụng hệ số phạt nặng hơn cho các nhãn hiếm gặp khi mô hình dự đoán sai nhằm buộc mô hình phải chú ý hơn đến các lớp này.
+3. **Tăng cường Regularization:** Tăng tỷ lệ Dropout hoặc áp dụng cơ chế Early Stopping chặt chẽ hơn dựa trên chỉ số `mean_f1` của tập Validation để ngắt huấn luyện ngay khi bắt đầu quá khớp (ở epoch 9).
+
+---
+
+## 9. Tài Nguyên Đã Lưu Trữ
+
+### 9.1. Checkpoints Mô Hình (Local)
 
 | File | Đường dẫn | Kích thước | Mô tả |
 |:---|:---|:---:|:---|
@@ -327,40 +378,43 @@ Vision (50, 35) ──► BiLSTM(2 layers, hidden=64)  ──► Attention Pooli
 | `last_model.pt` | `checkpoints/phase1/last_model.pt` | ~14 MB | Baseline LSTM — Epoch 14 |
 | `best_model_improved_lstm.pt` | `checkpoints/phase1/best_model_improved_lstm.pt` | ~24 MB | Improved LSTM — Epoch 7 |
 | `last_model_improved_lstm.pt` | `checkpoints/phase1/last_model_improved_lstm.pt` | ~24 MB | Improved LSTM — Epoch 17 |
+| `best_model_mult_emotion.pt` | `checkpoints/phase1/best_model_mult_emotion.pt` | ~25 MB | MulT Emotion — Epoch tốt nhất |
+| `last_model_mult_emotion.pt` | `checkpoints/phase1/last_model_mult_emotion.pt` | ~25 MB | MulT Emotion — Epoch 29 |
 
-### 8.2. Lịch Sử Huấn Luyện
+### 9.2. Lịch Sử Huấn Luyện
 
 | File | Đường dẫn | Mô tả |
 |:---|:---|:---|
-| `history.csv` | `logs/phase1/history.csv` | Toàn bộ log metrics mỗi epoch (cả 2 mô hình) |
-| `summary.json` | `outputs/phase1/summary.json` | Tóm tắt huấn luyện mô hình gần nhất |
+| `history.csv` | `logs/phase1/history.csv` | Toàn bộ log metrics mỗi epoch (bao gồm cả MulT Emotion) |
+| `summary.json` | `outputs/phase1/summary.json` | Tóm tắt cấu hình & kết quả chạy gần nhất |
 
-### 8.3. Google Cloud Storage (Backup)
+### 9.3. Google Cloud Storage (Backup)
 
 | Thư mục GCS | Nội dung |
 |:---|:---|
-| `gs://mer-data-bucket-kandesfx/checkpoints/phase1/` | 4 file checkpoint |
+| `gs://mer-data-bucket-kandesfx/checkpoints/phase1/` | Toàn bộ file checkpoint (bao gồm MulT Emotion) |
 | `gs://mer-data-bucket-kandesfx/logs/phase1/` | File history.csv |
 | `gs://mer-data-bucket-kandesfx/outputs/phase1/` | File summary.json |
-| `gs://mer-data-bucket-kandesfx/data/MSA-Dataset/` | Tập dữ liệu aligned_50.pkl |
+| `gs://mer-data-bucket-kandesfx/data/MSA-Dataset/` | Các tập dữ liệu `aligned_50.pkl`, `unaligned_50.pkl` và `aligned_50_vi.pkl` |
 
-### 8.4. Weights & Biases Dashboard
+### 9.4. Weights & Biases Dashboard
 
 | Run | Link | Mô tả |
 |:---|:---|:---|
-| Baseline LSTM (Full) | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/z94fsbos) | Run `phase1_early_fusion_colab` — Full training (50 epochs max, ES tại 14) |
+| Baseline LSTM | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/z94fsbos) | Run `phase1_early_fusion_colab` |
 | Improved LSTM | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/2bnz38bn) | Run `phase1_improved_lstm_colab` |
+| MulT Emotion | [W&B Run](https://wandb.ai/kandesfx-kandesfx/bcda-phase1/runs/1w4gi02k) | Run `phase1_mult_colab` (Đa cảm xúc) |
 
-### 8.5. Mã Nguồn Liên Quan
+### 9.5. Mã Nguồn Liên Quan
 
 | File | Đường dẫn | Mô tả |
 |:---|:---|:---|
 | Baseline Model | `training/models/early_fusion.py` | Kiến trúc EarlyFusionLSTMRegressor |
 | Improved Model | `training/models/improved_lstm.py` | Kiến trúc ImprovedLSTMRegressor |
-| MulT Model | `training/models/mult.py` | Kiến trúc MulTRegressor (sẵn sàng) |
+| MulT Model | `training/models/mult.py` | Kiến trúc MulTRegressor |
 | Config | `training/config_phase1.py` | Toàn bộ cấu hình Phase 1 |
 | Trainer | `training/trainer.py` | Vòng lặp huấn luyện + đánh giá |
-| Evaluator | `training/evaluator.py` | Tính toán metrics (MAE, MSE, Corr, Acc, F1) |
-| Dataset | `training/dataset_mosei.py` | DataLoader cho CMU-MOSEI |
-| Notebook Baseline | `notebooks/02_baseline_early_fusion.ipynb` | Notebook Colab cho Baseline |
-| Notebook Improved | `notebooks/02_improved_early_fusion.ipynb` | Notebook Colab cho Improved LSTM |
+| Evaluator | `training/evaluator_emotion.py` | Tính toán metrics của Emotion |
+| Dataset | `training/dataset_mosei.py` | DataLoader hỗ trợ lọc nhãn Emotion |
+| Notebook MulT Emotion | `notebooks/05_mult_emotion_training.ipynb` | Notebook Colab huấn luyện MulT Emotion |
+
