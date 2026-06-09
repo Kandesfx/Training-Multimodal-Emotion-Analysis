@@ -98,3 +98,58 @@ python tools/sync_gcs.py --bucket mer-data-bucket-kandesfx --direction down
 # (Tùy chọn) Chạy thử không tải thật để kiểm tra tệp tin thay đổi
 python tools/sync_gcs.py --bucket mer-data-bucket-kandesfx --direction down --dry-run
 ```
+
+---
+
+## 6. Đánh Giá Tất Cả Các Mô Hình Đã Train
+
+Sau khi checkpoints đã được đồng bộ về local/GCS, chạy notebook `08_evaluate_all_models.ipynb` để đánh giá tất cả models trên train/valid/test splits.
+
+### 6.1. Checkpoints Hiện Có
+
+| File | Model | Task | Loss | Trạng thái |
+|------|-------|------|------|-------------|
+| `best_model_mult.pt` | MulT (aligned) | Sentiment | MSE+L1 | ✅ Train tốt |
+| `best_model_mult_unaligned.pt` | MulT (unaligned) | Sentiment | MSE+L1 | ✅ Train tốt |
+| `best_model_improved_lstm.pt` | Improved LSTM | Sentiment | MSE | ✅ Train tốt |
+| `best_model_mult_emotion.pt` | MulT (P0) | Emotion | BCE | ✅ Train tốt |
+| `best_model_mult_emotion_p1_focal.pt` | MulT (P1) | Emotion | Focal Loss | ❌ **DIVERGED** — không dùng được |
+
+### 6.2. Kết Quả Emotion P0 (BCE Loss)
+
+**Checkpoint:** `best_model_mult_emotion.pt`
+
+| Split | Mean F1 | Mean Acc | Happy F1 | Sad F1 | Angry F1 | Surprise F1 | Disgust F1 | Fear F1 |
+|-------|---------|----------|----------|--------|---------|------------|------------|---------|
+| Valid (raw) | 0.2118 | — | — | — | — | — | — | — |
+| Test (raw) | **0.2307** | — | **0.4709** | ~0.27 | ~0.19 | ~0.10 | ~0.17 | 0.035 |
+| Test (tuned thresh) | **0.2621** | 0.4739 | **0.5984** | 0.2395 | 0.3165 | 0.0558 | 0.3048 | 0.0576 |
+
+> Threshold tuning (P0.1) cải thiện Mean F1 test thêm **+13.6%** mà không cần train lại.
+
+### 6.3. Sentiment — Kết Quả Từ Training Log
+
+| Metric | MMSA MulT (SOTA) | Improved LSTM | Target |
+|--------|------------------|-------------|--------|
+| MAE | 0.5593 | 0.5859 | ≤ 0.5700 |
+| Corr | 0.7331 | 0.7229 | ≥ 0.7300 |
+
+> MulT aligned và unaligned cần chạy evaluate notebook để lấy kết quả thực tế.
+
+### 6.4. Cách Chạy Evaluate
+
+1. Mở notebook `08_evaluate_all_models.ipynb` trên Colab
+2. Mount Drive và clone repo (các cell đầu tiên)
+3. Chạy cell **"EVALUATE ALL PHASE 1 CHECKPOINTS"**
+4. Kết quả: bảng so sánh đầy đủ + file `all_evaluations.json` lưu về Drive
+
+### 6.5. Bug Focal Loss (Đã Fix)
+
+Checkpoint `best_model_mult_emotion_p1_focal.pt` **bị diverged** do 2 bug trong `FocalLoss`:
+
+1. `pos_weight` bị nhân nhầm vào `alpha_t` → loss inflated 30-50x
+2. Reduction bất thường (`sum / mean_positives`) → loss tăng phi tuyến
+
+**Fix đã commit:** `1a15119` — FocalLoss dùng `alpha` chuẩn Lin et al. 2017, reduction `.mean()`.
+
+> **Cần retrain P1 emotion** sau fix này.
