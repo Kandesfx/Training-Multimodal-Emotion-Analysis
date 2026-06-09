@@ -151,10 +151,14 @@ class Phase1TrainingConfig:
 
     # --- Task ---
     task_type: str = "sentiment"      # "sentiment" or "emotion"
-    gradient_accumulation_steps: int = 1  # gradient accumulation steps for OOM prevention
 
     # --- P1: Stochastic Depth ---
     stochastic_depth_survival: float = 0.8  # P1: layer survival probability
+
+    # --- P1: Emotion Classification ---
+    focal_alpha: float = 0.25       # P1: Focal Loss alpha (weight for positive class)
+    focal_gamma: float = 2.0        # P1: Focal Loss gamma (focusing parameter)
+    pos_weight_max: float = 50.0    # P1: max clamp for pos_weight to prevent instability
 
 
 @dataclass

@@ -17,12 +17,29 @@ from training.trainer import Phase1Trainer
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train Phase 1 Early Fusion LSTM on CMU-MOSEI aligned features")
+    parser = argparse.ArgumentParser(
+        description="Train Phase 1 models on CMU-MOSEI aligned features"
+    )
     parser.add_argument("--pkl-path", type=str, default=None, help="Optional override path to aligned_50.pkl")
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
+    parser.add_argument(
+        "--task-type", type=str, default=None,
+        choices=["sentiment", "emotion"],
+        help="Task type: 'sentiment' (regression) or 'emotion' (multi-label classification)"
+    )
+    parser.add_argument(
+        "--loss-type", type=str, default=None,
+        choices=["mse", "mse_l1", "bce", "focal"],
+        help="Loss function type"
+    )
+    parser.add_argument(
+        "--model-type", type=str, default=None,
+        choices=["early_fusion", "improved_lstm", "mult"],
+        help="Model architecture"
+    )
     return parser
 
 
@@ -37,6 +54,12 @@ def apply_overrides(cfg: Phase1Config, args: argparse.Namespace) -> Phase1Config
         cfg.training.learning_rate = args.learning_rate
     if args.pkl_path is not None:
         cfg.paths.mosei_pkl = Path(args.pkl_path)
+    if args.task_type is not None:
+        cfg.training.task_type = args.task_type
+    if args.loss_type is not None:
+        cfg.training.loss_type = args.loss_type
+    if args.model_type is not None:
+        cfg.model_type = args.model_type
     return cfg
 
 
@@ -49,12 +72,26 @@ def _sync_mult_stochastic_depth(cfg: Phase1Config) -> None:
     cfg.mult_model.stochastic_depth_survival = cfg.training.stochastic_depth_survival
 
 
+def _sync_output_dim(cfg: Phase1Config) -> None:
+    """Auto-set output_dim based on task_type.
+
+    Emotion task requires output_dim=6 (6 emotions).
+    Sentiment task uses output_dim=1 (scalar regression).
+    """
+    if cfg.model_type == "mult":
+        if cfg.training.task_type == "emotion":
+            cfg.mult_model.output_dim = 6
+        else:
+            cfg.mult_model.output_dim = 1
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     cfg = apply_overrides(default_config, args)
     cfg.setup()
     _sync_mult_stochastic_depth(cfg)
+    _sync_output_dim(cfg)
 
     dataloaders = create_dataloaders(config=cfg, pkl_path=cfg.paths.mosei_pkl)
     

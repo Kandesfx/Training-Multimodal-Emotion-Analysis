@@ -22,6 +22,7 @@ from tqdm import tqdm
 from training.config_phase1 import Phase1Config
 from training.evaluator import compute_metrics, metrics_to_row
 from training.evaluator_emotion import compute_emotion_metrics, emotion_metrics_to_row
+from training.losses import FocalLoss, compute_pos_weight
 
 
 class _CombinedMSEL1Loss(nn.Module):
@@ -52,7 +53,7 @@ class Phase1Trainer:
         self.config.setup()
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
-        self.criterion = self._build_criterion()
+        self.criterion: nn.Module | None = None  # built lazily in fit() with pos_weight
         self.optimizer = AdamW(
             self.model.parameters(),
             lr=self.config.training.learning_rate,
@@ -92,7 +93,24 @@ class Phase1Trainer:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    def _build_criterion(self) -> nn.Module:
+    def _compute_class_weights(self, train_labels: torch.Tensor) -> torch.Tensor | None:
+        """Compute pos_weight for BCE / Focal Loss from training labels.
+
+        pos_weight[i] = num_negatives_i / num_positives_i for emotion i.
+        Higher weight → more penalty for missing rare positive samples.
+        Clamped to max_weight to prevent training instability.
+        """
+        if self.task_type != "emotion":
+            return None
+        pos_weight = compute_pos_weight(
+            train_labels,
+            max_weight=self.config.training.pos_weight_max,
+        )
+        if pos_weight is not None:
+            print(f"  [Class Weights] pos_weight={pos_weight.cpu().tolist()}")
+        return pos_weight
+
+    def _build_criterion(self, class_weights: torch.Tensor | None = None) -> nn.Module:
         """Build loss function based on config.training.loss_type."""
         loss_type = self.config.training.loss_type.lower().strip()
         if loss_type == "mse":
@@ -100,8 +118,20 @@ class Phase1Trainer:
         if loss_type == "mse_l1":
             return _CombinedMSEL1Loss(l1_weight=self.config.training.l1_weight)
         if loss_type == "bce":
+            if class_weights is not None:
+                return nn.BCEWithLogitsLoss(pos_weight=class_weights.to(self.device))
             return nn.BCEWithLogitsLoss()
-        raise ValueError(f"Unsupported loss_type: {loss_type!r}. Use 'mse', 'mse_l1', or 'bce'.")
+        if loss_type == "focal":
+            return FocalLoss(
+                alpha=self.config.training.focal_alpha,
+                gamma=self.config.training.focal_gamma,
+                reduction="mean",
+                pos_weight=class_weights,
+            )
+        raise ValueError(
+            f"Unsupported loss_type: {loss_type!r}. "
+            f"Use 'mse', 'mse_l1', 'bce', or 'focal'."
+        )
 
     def _build_scheduler(self):
         """Build LR scheduler based on config.training.scheduler_type."""
@@ -131,6 +161,15 @@ class Phase1Trainer:
             )
         raise ValueError(f"Unsupported scheduler_type: {sched_type!r}. Use 'plateau' or 'cosine_warmup'.")
 
+    def _collect_labels(self, data_loader) -> torch.Tensor:
+        """Collect all labels from a DataLoader (for class weight computation)."""
+        self.model.eval()
+        labels: list[torch.Tensor] = []
+        with torch.no_grad():
+            for batch in data_loader:
+                labels.append(batch["label"].to(self.device, non_blocking=True))
+        return torch.cat(labels, dim=0)
+
     def _upload_to_gcs(self, local_path: Path) -> None:
         if not self.config.runtime.use_gcs:
             return
@@ -156,6 +195,15 @@ class Phase1Trainer:
 
     def fit(self, train_loader, valid_loader) -> dict[str, Any]:
         self.set_seed(self.config.training.seed)
+
+        # Build criterion with pos_weight computed from training labels (P1: emotion imbalance fix)
+        class_weights = None
+        loss_type = self.config.training.loss_type.lower().strip()
+        if loss_type in ("bce", "focal"):
+            train_labels = self._collect_labels(train_loader)
+            class_weights = self._compute_class_weights(train_labels)
+        self.criterion = self._build_criterion(class_weights=class_weights)
+        print(f"  [Loss] type={loss_type}, criterion={self.criterion.__class__.__name__}")
 
         start_epoch = 1
         best_metric = float("inf") if not self.maximize_metric else float("-inf")
@@ -330,7 +378,7 @@ class Phase1Trainer:
         self.model.train(training)
         total_loss = 0.0
         progress = tqdm(data_loader, desc=f"Epoch {epoch} {'train' if training else 'eval'}", leave=False)
-        accum_steps = self.config.training.gradient_accumulation_steps
+        accum_steps = getattr(self.config.training, "gradient_accumulation_steps", 1)
 
         if training:
             self.optimizer.zero_grad(set_to_none=True)
