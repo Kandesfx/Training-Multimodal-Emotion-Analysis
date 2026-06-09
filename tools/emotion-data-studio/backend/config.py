@@ -177,7 +177,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY", None)
     EDS_UPDATE_URL: Optional[str] = os.getenv("EDS_UPDATE_URL", "https://pub-74b3008a5f904815b3951f8d440264cc.r2.dev")
 
-    # Gemini Auto-Labeler (Vertex AI)
+    # Gemini Auto-Labeler
+    GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
     VERTEX_LOCATION: str = os.getenv("VERTEX_LOCATION", "us-central1")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.2"))

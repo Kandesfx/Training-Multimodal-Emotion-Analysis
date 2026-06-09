@@ -194,10 +194,23 @@ class GeminiAutoLabeler:
     # ── Client (Vertex AI only) ────────────────────────────
 
     def _resolve_client(self) -> Any:
-        """Tạo google.genai.Client dùng Vertex AI credentials."""
+        """Tạo google.genai.Client — ưu tiên API Key, fallback Vertex AI."""
         if self._client is not None:
             return self._client
 
+        from backend.config import settings
+        api_key = os.getenv("GEMINI_API_KEY") or getattr(settings, "GEMINI_API_KEY", None)
+
+        if api_key:
+            import google.genai as genai  # type: ignore[attr-defined]
+            genai_key = api_key
+            self._client = genai.Client(
+                api_key=genai_key,
+            )
+            logger.info(f"GeminiAutoLabeler: Gemini API Key, model={self.model}")
+            return self._client
+
+        # Fallback: Vertex AI OAuth
         import google.genai as genai  # type: ignore[attr-defined]
         import google.auth as gauth  # type: ignore[attr-defined]
 
@@ -685,19 +698,24 @@ class GeminiAutoLabeler:
     # ── Config / Status ───────────────────────────────────
 
     def is_configured(self) -> tuple[bool, str]:
-        """Kiểm tra Vertex AI credentials."""
+        """Kiem tra Gemini credentials (Vertex AI hoac API key)."""
+        # Uu tien API key tren Colab (khong can OAuth/refresh)
+        api_key = os.getenv("GEMINI_API_KEY") or getattr(
+            __import__("backend.config", fromlist=["settings"]).settings,
+            "GEMINI_API_KEY", None
+        )
+        if api_key:
+            return True, f"San sang (Gemini API Key, model={self.model})"
+
+        # Fallback: Vertex AI (chi kiem tra credentials ton tai, khong refresh)
         try:
             import google.auth as gauth  # type: ignore[attr-defined]
             creds, project = gauth.default()
-            if not creds.token or not creds.valid:
-                from google.auth.transport import requests as grequests  # type: ignore[attr-defined]
-                creds.refresh(grequests.Request())
-            gcp_project = os.getenv("GCP_PROJECT_ID") or project
-            if gcp_project:
-                return True, f"San sang (Vertex AI, project={gcp_project}, model={self.model})"
+            if creds and project:
+                return True, f"San sang (Vertex AI, project={project}, model={self.model})"
         except Exception as exc:
-            return False, f"Loi: {exc}"
-        return False, "Chua cau hinh Vertex AI credentials"
+            pass
+        return False, "Chua cau hinh GEMINI_API_KEY hoac Vertex AI credentials"
 
     def status(self) -> dict[str, Any]:
         """Tra ve trang thai cau hinh."""
