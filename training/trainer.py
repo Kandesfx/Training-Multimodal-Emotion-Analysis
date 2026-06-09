@@ -94,11 +94,11 @@ class Phase1Trainer:
             torch.cuda.manual_seed_all(seed)
 
     def _compute_class_weights(self, train_labels: torch.Tensor) -> torch.Tensor | None:
-        """Compute pos_weight for BCE / Focal Loss from training labels.
+        """Compute pos_weight for BCE loss from training labels.
 
         pos_weight[i] = num_negatives_i / num_positives_i for emotion i.
-        Higher weight → more penalty for missing rare positive samples.
         Clamped to max_weight to prevent training instability.
+        BCEWithLogitsLoss handles pos_weight natively (no extra multiplication).
         """
         if self.task_type != "emotion":
             return None
@@ -118,15 +118,21 @@ class Phase1Trainer:
         if loss_type == "mse_l1":
             return _CombinedMSEL1Loss(l1_weight=self.config.training.l1_weight)
         if loss_type == "bce":
+            # pos_weight correctly handled by BCEWithLogitsLoss natively:
+            # loss[i] = pos_weight[i] * (1-p_i) * log(p_i) for y=1
+            # loss[i] = (1-p_i) * log(1-p_i) for y=0
             if class_weights is not None:
-                return nn.BCEWithLogitsLoss(pos_weight=class_weights.to(self.device))
-            return nn.BCEWithLogitsLoss()
+                print(f"  [Class Weights] pos_weight={class_weights.cpu().tolist()}")
+            return nn.BCEWithLogitsLoss(pos_weight=class_weights.to(self.device) if class_weights is not None else None)
         if loss_type == "focal":
+            # Focal Loss with alpha focuses on hard examples; class imbalance is
+            # already handled by the Focusing term (gamma). Use BCE loss type for
+            # explicit pos_weight balancing if needed.
             return FocalLoss(
                 alpha=self.config.training.focal_alpha,
                 gamma=self.config.training.focal_gamma,
                 reduction="mean",
-                pos_weight=class_weights,
+                pos_weight=None,  # class balancing via alpha only
             )
         raise ValueError(
             f"Unsupported loss_type: {loss_type!r}. "

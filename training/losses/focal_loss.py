@@ -105,10 +105,7 @@ class FocalLoss(nn.Module):
         focal_weight = (1.0 - p_t).pow(self.gamma)
 
         # Alpha factor: alpha for positives, (1 - alpha) for negatives
-        if self.pos_weight is not None:
-            alpha_t = self.pos_weight.unsqueeze(0) * targets + (1.0 - targets)
-        else:
-            alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
+        alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
 
         focal_loss = alpha_t * focal_weight * bce
 
@@ -116,6 +113,6 @@ class FocalLoss(nn.Module):
             return focal_loss.sum()
         if self.reduction == "none":
             return focal_loss
-        # mean over batch AND over all class dimensions
-        # Normalize by number of positive targets + 1 to avoid div-by-zero
-        return focal_loss.sum() / (targets.sum(dim=1).clamp(min=1).unsqueeze(1)).mean()
+        # Standard mean reduction over all (batch * num_classes) elements.
+        # Each element contributes equally; no special normalization per positives.
+        return focal_loss.mean()
