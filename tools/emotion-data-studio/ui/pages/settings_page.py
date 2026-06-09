@@ -70,6 +70,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_download_card())
         layout.addWidget(self._build_pipeline_card())
         layout.addWidget(self._build_smart_segmentation_card())
+        layout.addWidget(self._build_cloud_card())
         layout.addWidget(self._build_diagnostics_card())
         layout.addStretch()
 
@@ -219,6 +220,76 @@ class SettingsPage(QWidget):
         silence_row.addWidget(self.smart_silence_threshold_db, stretch=1)
         layout.addLayout(silence_row)
         return card
+
+    def _build_cloud_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setSpacing(12)
+
+        title = QLabel("Đồng Bộ Cloud")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+
+        note = QLabel(
+            "Cấu hình đồng bộ dữ liệu với Google Cloud Storage và Cloud SQL. "
+            "Các biến môi trường cần được đặt trong file .env."
+        )
+        note.setObjectName("mutedText")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        self.gcs_bucket_input = self._path_row(layout, "GCS Bucket Name", placeholder="my-bucket-name")
+        self.gcs_creds_input = self._path_row(layout, "Service Account JSON", browse_file=True)
+        self.gcp_project_input = self._path_row(layout, "GCP Project ID", placeholder="my-gcp-project")
+        self.cloudsql_conn_input = self._path_row(layout, "Cloud SQL Connection Name", placeholder="project:region:instance")
+        self.cloudsql_db_input = self._path_row(layout, "Cloud SQL Database Name", placeholder="eds_production")
+        self.cloudsql_user_input = self._path_row(layout, "Cloud SQL User", placeholder="eds_user")
+        self.cloudsql_pass_input = self._path_row(layout, "Cloud SQL Password", placeholder="••••••••")
+        self.cloudsql_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+
+        sync_row = QHBoxLayout()
+        sync_row.addWidget(QLabel("Sync videos (large files):"))
+        self.sync_videos_check = QComboBox()
+        self.sync_videos_check.addItems(["No", "Yes"])
+        sync_row.addWidget(self.sync_videos_check)
+        sync_row.addStretch()
+        layout.addLayout(sync_row)
+
+        self.save_btn = QPushButton("Save Settings")
+        self.save_btn.setObjectName("primaryBtn")
+        self.save_btn.clicked.connect(self._save_cloud_settings)
+        layout.addWidget(self.save_btn)
+
+        self.cloud_status_label = QLabel("")
+        self.cloud_status_label.setObjectName("mutedText")
+        layout.addWidget(self.cloud_status_label)
+
+        return card
+
+    def _save_cloud_settings(self):
+        """Save cloud settings to user_settings.json."""
+        import json as _json
+        settings_path = Path("d:/Hai/study/DeepLerning/BCDA/tools/emotion-data-studio/data/user_settings.json")
+        try:
+            data = _json.loads(settings_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+
+        data.setdefault("cloud", {})
+        data["cloud"]["gcs_bucket"] = self.gcs_bucket_input.text().strip()
+        data["cloud"]["gcs_credentials"] = self.gcs_creds_input.text().strip()
+        data["cloud"]["gcp_project"] = self.gcp_project_input.text().strip()
+        data["cloud"]["cloudsql_connection"] = self.cloudsql_conn_input.text().strip()
+        data["cloud"]["cloudsql_db"] = self.cloudsql_db_input.text().strip()
+        data["cloud"]["cloudsql_user"] = self.cloudsql_user_input.text().strip()
+        data["cloud"]["cloudsql_password"] = self.cloudsql_pass_input.text().strip()
+        data["cloud"]["sync_videos"] = self.sync_videos_check.currentText() == "Yes"
+
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.cloud_status_label.setText("✅ Cloud settings saved to user_settings.json")
+        self.settings_saved.emit(data)
 
     def _build_diagnostics_card(self) -> QFrame:
         card = QFrame()

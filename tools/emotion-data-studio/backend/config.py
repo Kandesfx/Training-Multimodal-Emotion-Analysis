@@ -99,6 +99,7 @@ def _load_user_settings_into_env() -> None:
         "download_use_aria2": "EDS_DOWNLOAD_USE_ARIA2",
         "download_cookies_browser": "EDS_DOWNLOAD_COOKIES_BROWSER",
         "download_cookie_file": "EDS_DOWNLOAD_COOKIE_FILE",
+        "gemini_api_key": "GEMINI_API_KEY",
     }
     for key, env_key in mapping.items():
         value = data.get(key)
@@ -176,6 +177,23 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY", None)
     EDS_UPDATE_URL: Optional[str] = os.getenv("EDS_UPDATE_URL", "https://pub-74b3008a5f904815b3951f8d440264cc.r2.dev")
 
+    # Gemini Auto-Labeler (Vertex AI)
+    VERTEX_LOCATION: str = os.getenv("VERTEX_LOCATION", "us-central1")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_TEMPERATURE: float = float(os.getenv("GEMINI_TEMPERATURE", "0.2"))
+    GEMINI_MAX_TOKENS: int = int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
+    GEMINI_INTENSITY_THRESHOLD: float = float(os.getenv("GEMINI_INTENSITY_THRESHOLD", "0.6"))
+    GEMINI_MONTHLY_BUDGET_USD: float = float(os.getenv("GEMINI_MONTHLY_BUDGET_USD", "500.0"))
+    GEMINI_COST_TRACKING_ENABLED: bool = (
+        os.getenv("GEMINI_COST_TRACKING_ENABLED", "true").strip().lower() == "true"
+    )
+
+    # Vertex AI Agent Studio — Cloud Run endpoint
+    # Deployed agent URL (e.g. https://genai-app-eds-xxx.us-central1.run.app)
+    AGENT_RUNTIME_URL: Optional[str] = os.getenv("AGENT_RUNTIME_URL", None)
+    # API key / secret for the deployed agent (aiplatform.googleapis.com/app-secret-key)
+    AGENT_API_KEY: Optional[str] = os.getenv("AGENT_API_KEY", None)
+
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
@@ -194,8 +212,16 @@ class Settings(BaseSettings):
     def ensure_directories(self) -> None:
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        for name in ("videos", "clips", "frames", "audio", "exports", "logs"):
+        for name in ("videos", "clips", "frames", "audio", "exports", "logs", "inbox", "features", "faces", "config"):
             (self.DATA_DIR / name).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def inbox_dir(self) -> Path:
+        return self.DATA_DIR / "inbox"
+
+    @property
+    def colab_config_path(self) -> Path:
+        return self.DATA_DIR / "config" / "pipeline_config.json"
 
 settings = Settings()
 settings.ensure_directories()

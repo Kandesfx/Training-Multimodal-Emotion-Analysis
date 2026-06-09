@@ -168,7 +168,6 @@ class ExportPage(QWidget):
         layout.addWidget(self.export_status_label)
 
         buttons = QHBoxLayout()
-        buttons.addStretch()
         self.export_btn = QPushButton("Xuất ra Thư Mục")
         self.export_btn.setObjectName("primaryBtn")
         self.export_btn.setMinimumWidth(190)
@@ -179,6 +178,10 @@ class ExportPage(QWidget):
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self._on_cancel_export)
         buttons.addWidget(self.cancel_btn)
+        buttons.addStretch()
+        self.mmsa_export_btn = QPushButton("Xuất MMSA (.pkl) cho MulT")
+        self.mmsa_export_btn.clicked.connect(self._on_mmsa_export)
+        buttons.addWidget(self.mmsa_export_btn)
         layout.addLayout(buttons)
         self.main_layout.addWidget(card)
 
@@ -211,13 +214,48 @@ class ExportPage(QWidget):
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
+        layout.setSpacing(12)
+
         title = QLabel("Đồng Bộ Đám Mây")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        status = QLabel("Chưa kết nối đồng bộ đám mây. Hãy cấu hình khóa bí mật trong biến môi trường.")
-        status.setObjectName("warningText")
-        status.setWordWrap(True)
-        layout.addWidget(status)
+
+        status_note = QLabel(
+            "Đồng bộ clips, audio và metadata lên Google Cloud Storage. "
+            "Cấu hình credentials trong trang Cài Đặt."
+        )
+        status_note.setObjectName("mutedText")
+        status_note.setWordWrap(True)
+        layout.addWidget(status_note)
+
+        self.cloud_status_label = QLabel("Kiểm tra trạng thái...")
+        self.cloud_status_label.setObjectName("mutedText")
+        layout.addWidget(self.cloud_status_label)
+
+        buttons = QHBoxLayout()
+        self.sync_full_btn = QPushButton("Sync Đầy Đủ")
+        self.sync_full_btn.setObjectName("primaryBtn")
+        self.sync_full_btn.clicked.connect(self._on_sync_full)
+        buttons.addWidget(self.sync_full_btn)
+        self.sync_files_btn = QPushButton("Sync Files")
+        self.sync_files_btn.clicked.connect(self._on_sync_files)
+        buttons.addWidget(self.sync_files_btn)
+        self.sync_status_btn = QPushButton("Kiểm Tra")
+        self.sync_status_btn.clicked.connect(self._on_check_sync_status)
+        buttons.addWidget(self.sync_status_btn)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+        self.sync_progress = QProgressBar()
+        self.sync_progress.setVisible(False)
+        layout.addWidget(self.sync_progress)
+
+        self.sync_log = QPlainTextEdit()
+        self.sync_log.setObjectName("logViewer")
+        self.sync_log.setReadOnly(True)
+        self.sync_log.setMaximumHeight(120)
+        layout.addWidget(self.sync_log)
+
         self.main_layout.addWidget(card)
 
     # Actions --------------------------------------------------------
@@ -298,6 +336,62 @@ class ExportPage(QWidget):
         self.export_status_label.setText(f"Lỗi: {error_msg}")
         QMessageBox.critical(self, "Lỗi Xuất", error_msg)
 
+    @Slot()
+    def _on_mmsa_export(self):
+        from PySide6.QtWidgets import QFileDialog
+        output_path, _ = QFileDialog.getSaveFileName(
+            self, "Xuất MMSA .pkl", "emotions_dataset.pkl", "Pickle files (*.pkl)"
+        )
+        if not output_path:
+            return
+
+        self.mmsa_export_btn.setEnabled(False)
+        self.export_progress.setVisible(True)
+        self.export_status_label.setVisible(True)
+        self.export_status_label.setText("Đang export MMSA .pkl cho MulT...")
+
+        try:
+            from backend.database.local_db import get_session
+            from backend.services.exporters.mmsa_exporter import MMSAExporter
+            from backend.config import settings
+
+            session = get_session()
+            try:
+                feature_dir = str(settings.DATA_DIR / "features")
+                exporter = MMSAExporter(session)
+                result = exporter.export(
+                    output_path=output_path,
+                    feature_dir=feature_dir,
+                    require_aligned=True,
+                )
+            finally:
+                session.close()
+
+            if "error" in result:
+                QMessageBox.warning(self, "Export thất bại", result["error"])
+                self.export_status_label.setText(f"Lỗi: {result['error']}")
+            else:
+                summary = (
+                    f"✅ Export thành công!\n\n"
+                    f"File: {output_path}\n"
+                    f"Tổng clip: {result['total_clips']}\n"
+                    f"Train: {result['train_clips']} | Val: {result['valid_clips']} | Test: {result['test_clips']}\n"
+                    f"Videos: {result['train_videos'] + result['valid_videos'] + result['test_videos']}"
+                )
+                self.export_status_label.setText(f"✅ Đã export: {result['total_clips']} clips")
+                self._last_output_path = str(Path(output_path).parent)
+                self.output_path_label.setText(output_path)
+                self.open_folder_btn.setEnabled(True)
+                QMessageBox.information(self, "Export MMSA Thành Công", summary)
+        except Exception as exc:
+            QMessageBox.critical(self, "Lỗi", f"Không export được:\n{exc}")
+            self.export_status_label.setText(f"Lỗi: {exc}")
+        finally:
+            self.mmsa_export_btn.setEnabled(True)
+            self.export_progress.setValue(0)
+            self.export_progress.setVisible(False)
+            self.export_status_label.setVisible(False)
+
     def _open_last_output(self):
         if not self._last_output_path:
             return
@@ -314,6 +408,88 @@ class ExportPage(QWidget):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(self._build_summary_text())
         self.output_path_label.setText("Đã sao chép tóm tắt vào clipboard")
+
+    # Cloud sync handlers -----------------------------------------------
+
+    def _run_sync_worker(self, sync_type: str, **kwargs):
+        from ui.workers.sync_worker import SyncWorker
+        if self._export_worker is not None and self._export_worker.isRunning():
+            QMessageBox.warning(self, "Đang bận", "Có tiến trình export/sync đang chạy.")
+            return
+        self._export_worker = SyncWorker(sync_type=sync_type, **kwargs)
+        self._export_worker.log_message.connect(self._on_sync_log)
+        self._export_worker.progress_updated.connect(self._on_sync_progress)
+        self._export_worker.sync_finished.connect(self._on_sync_finished)
+        self._export_worker.error_occurred.connect(self._on_export_error)
+        self.sync_full_btn.setEnabled(False)
+        self.sync_files_btn.setEnabled(False)
+        self.sync_progress.setVisible(True)
+        self._export_worker.start()
+
+    @Slot()
+    def _on_sync_full(self):
+        self._run_sync_worker("full", sync_videos=False)
+
+    @Slot()
+    def _on_sync_files(self):
+        self._run_sync_worker("files", sync_videos=False)
+
+    @Slot(str)
+    def _on_sync_log(self, msg: str):
+        self.sync_log.appendPlainText(msg)
+
+    @Slot(str, int, int)
+    def _on_sync_progress(self, stage: str, current: int, total: int):
+        if total > 0:
+            self.sync_progress.setValue(int(current / total * 100))
+
+    @Slot(dict)
+    def _on_sync_finished(self, report: dict):
+        self.sync_full_btn.setEnabled(True)
+        self.sync_files_btn.setEnabled(True)
+        self.sync_progress.setVisible(False)
+        status = report.get("status", "unknown")
+        if status == "error":
+            self.cloud_status_label.setText(f"❌ Lỗi: {report.get('error', 'unknown')}")
+        else:
+            meta = report.get("metadata", {})
+            files = report.get("files", {})
+            meta_errors = meta.get("errors", [])
+            file_errors = files.get("errors", [])
+            total_errors = len(meta_errors) + len(file_errors)
+            if total_errors > 0:
+                self.cloud_status_label.setText(
+                    f"⚠️ Hoàn tất với {total_errors} lỗi"
+                )
+            else:
+                self.cloud_status_label.setText(
+                    f"✅ Hoàn tất. "
+                    f"Up: {meta.get('uploaded_videos', 0)} video, "
+                    f"{meta.get('uploaded_clips', 0)} clip | "
+                    f"Files: {files.get('uploaded_files', 0)}"
+                )
+        QMessageBox.information(self, "Sync Hoàn Tất", "Cloud sync đã chạy xong.\n\nXem log để biết chi tiết.")
+
+    @Slot()
+    def _on_check_sync_status(self):
+        try:
+            from backend.cloud.sync_manager import SyncManager
+            manager = SyncManager()
+            avail = manager.is_available
+            last = manager.get_sync_status()
+            if not avail:
+                self.cloud_status_label.setText(
+                    "⚠️ Cloud sync chưa cấu hình. "
+                    "Đặt GOOGLE_APPLICATION_CREDENTIALS và GCS_BUCKET_NAME trong Settings."
+                )
+            else:
+                last_time = last.get("last_sync") or "chưa bao giờ"
+                last_status = last.get("status", "unknown")
+                self.cloud_status_label.setText(
+                    f"✅ Cloud sync sẵn sàng. Last sync: {last_time} ({last_status})"
+                )
+        except Exception as exc:
+            self.cloud_status_label.setText(f"❌ Lỗi kiểm tra: {exc}")
 
     # Data -----------------------------------------------------------
 

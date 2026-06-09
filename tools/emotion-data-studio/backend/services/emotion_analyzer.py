@@ -15,12 +15,12 @@ from typing import Any, Dict, Iterable
 EMOTIONS = ["happy", "sad", "angry", "fear", "surprise", "disgust", "neutral"]
 
 VI_LEXICON = {
-    "happy": ["vui", "hạnh phúc", "cười", "thích", "yêu", "tuyệt", "may quá", "mừng", "sướng"],
-    "sad": ["buồn", "khóc", "đau lòng", "cô đơn", "mất", "nhớ", "tủi", "thất vọng"],
-    "angry": ["giận", "tức", "bực", "đồ khốn", "im đi", "câm", "ghét", "điên", "không tha"],
-    "fear": ["sợ", "lo", "hoảng", "cứu", "nguy hiểm", "chạy đi", "đừng", "hãi"],
-    "surprise": ["sao", "gì cơ", "thật á", "không thể", "bất ngờ", "trời ơi", "ủa"],
-    "disgust": ["ghê", "kinh", "tởm", "bẩn", "khinh", "đáng ghét"],
+    "happy": ["vui", "hanh phuc", "cuoi", "thich", "yeu", "tuyet", "may qua", "mung", "suong", "vui ve", "hanh phuc", "hoan hoan", "ron rang"],
+    "sad": ["buon", "khoc", "dau long", "co don", "mat", "nho", "tui", "that vong", "tui nhu", "nuoc mat", "bi luy", "sau", "thuong"],
+    "angry": ["gian", "tuc", "buc", "do khon", "im di", "cam", "ghet", "dien", "khong tha", "cam han", "tuc gian", "buc boi"],
+    "fear": ["so", "lo", "hoang", "cuu", "nguy hiem", "chay di", "dung", "hai", "run", "rung minh", "lo lang", "bat an", "hoang loan"],
+    "surprise": ["sao", "gi co", "that an", "khong the", "bat ngo", "troi oi", "ua", "chu sao", "lam sao", "that khong", "khong tin noi"],
+    "disgust": ["ghe", "kinh", "tom", "ban", "khinh", "dang ghet", "buon non", "ghe tom", "kinh tom", "buc", "ngay", "ac"],
 }
 
 
@@ -90,31 +90,24 @@ class EmotionAnalyzer:
         return self._normalize({emotion: aggregate[emotion] / used for emotion in EMOTIONS})
 
     def _vietnamese_text_emotion(self, transcript: str) -> dict[str, float]:
-        text = transcript.lower().strip()
-        if not text:
+        if not transcript or not transcript.strip():
             return {}
-        scores = {emotion: 0.0 for emotion in EMOTIONS}
-        for emotion, phrases in VI_LEXICON.items():
-            for phrase in phrases:
-                if phrase in text:
-                    scores[emotion] += 1.0 + min(1.0, len(phrase.split()) * 0.15)
-        if sum(scores.values()) == 0:
-            # Không ép neutral khi lời thoại không có tín hiệu cảm xúc rõ.
-            return {}
-        scores["neutral"] += 0.25
-        return self._normalize(scores)
+        try:
+            from backend.ai_models.text_emotion_model import text_emotion_classifier
+            result = text_emotion_classifier.predict(transcript)
+            return self._normalize({row["label"]: float(row["score"]) for row in result})
+        except Exception:
+            pass
+        # Fallback: simple lexicon matching
+        return self._lexicon_fallback(transcript)
 
     def _audio_emotion(self, audio_path: str | None) -> dict[str, float]:
         if not audio_path or not Path(audio_path).exists():
             return {}
         try:
-            from backend.ai_models.model_manager import model_manager
-            classifier = model_manager.get_model("audio_emotion")
-            if classifier is None:
-                return {}
-            result = classifier(audio_path)
-            rows = result[0] if result and isinstance(result[0], list) else result
-            return self._normalize({self._map_emotion(row.get("label", "")): float(row.get("score", 0.0)) for row in rows})
+            from backend.ai_models.audio_emotion_model import audio_emotion_classifier
+            result = audio_emotion_classifier.predict(audio_path)
+            return self._normalize({row["label"]: float(row["score"]) for row in result})
         except Exception:
             return {}
 
@@ -140,6 +133,29 @@ class EmotionAnalyzer:
         if total <= 0:
             return {"neutral": 1.0}
         return {emotion: value / total for emotion, value in mapped.items()}
+
+    @staticmethod
+    def _lexicon_fallback(text: str) -> dict[str, float]:
+        """Simple lexicon fallback when PhoBERT encoding is unavailable."""
+        import unicodedata
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFD", text.lower().strip())
+            if unicodedata.category(c) != "Mn"
+        )
+        scores = {emotion: 0.0 for emotion in EMOTIONS}
+        for emotion, phrases in VI_LEXICON.items():
+            for phrase in phrases:
+                norm_phrase = "".join(
+                    c for c in unicodedata.normalize("NFD", phrase)
+                    if unicodedata.category(c) != "Mn"
+                )
+                # Require at least 3 chars to avoid single-character false matches
+                if len(norm_phrase) >= 3 and norm_phrase in normalized:
+                    scores[emotion] += 1.0 + min(1.0, len(phrase.split()) * 0.15)
+        if sum(scores.values()) == 0:
+            return {}
+        scores["neutral"] += 0.25
+        return EmotionAnalyzer._normalize(scores)
 
     @staticmethod
     def _map_emotion(label: str) -> str:

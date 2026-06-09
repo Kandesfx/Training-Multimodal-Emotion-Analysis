@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSizePolicy,
     QScrollArea,
+    QApplication,
 )
 
 from ui.styles.theme import EMOTION_MAP, Colors
@@ -720,6 +721,57 @@ class ReviewPage(QWidget):
         btn_grid_layout.addLayout(col_right)
         layout.addWidget(btn_grid)
 
+        # ── Sentiment Score Slider [–3, +3] ──────────────────────────────
+        sentiment_frame = QFrame()
+        sentiment_frame.setObjectName("subtleCard")
+        sentiment_layout = QVBoxLayout(sentiment_frame)
+        sentiment_layout.setContentsMargins(10, 8, 10, 8)
+        sentiment_layout.setSpacing(4)
+
+        sentiment_header = QHBoxLayout()
+        sentiment_title = QLabel("★ Sentiment Score")
+        sentiment_title.setObjectName("sectionTitle")
+        sentiment_header.addWidget(sentiment_title)
+        sentiment_header.addStretch()
+        self.sentiment_value_label = QLabel("0.0")
+        self.sentiment_value_label.setObjectName("statValue")
+        self.sentiment_value_label.setFixedWidth(50)
+        self.sentiment_value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        sentiment_header.addWidget(self.sentiment_value_label)
+        sentiment_layout.addLayout(sentiment_header)
+
+        self.sentiment_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sentiment_slider.setMinimum(-30)  # -3.0 × 10
+        self.sentiment_slider.setMaximum(30)   # +3.0 × 10
+        self.sentiment_slider.setValue(0)
+        self.sentiment_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.sentiment_slider.setTickInterval(10)  # marks at -3, -2, -1, 0, 1, 2, 3
+        self.sentiment_slider.setSingleStep(1)     # 0.1 precision
+        self.sentiment_slider.setPageStep(5)       # 0.5 jumps
+        self.sentiment_slider.setFixedHeight(28)
+        self.sentiment_slider.valueChanged.connect(self._on_sentiment_slider_changed)
+        sentiment_layout.addWidget(self.sentiment_slider)
+
+        # Scale labels row
+        scale_row = QHBoxLayout()
+        scale_row.setContentsMargins(0, 0, 0, 0)
+        neg_label = QLabel("-3 Tiêu cực")
+        neg_label.setObjectName("mutedText")
+        scale_row.addWidget(neg_label)
+        scale_row.addStretch()
+        neutral_label = QLabel("0")
+        neutral_label.setObjectName("mutedText")
+        neutral_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scale_row.addWidget(neutral_label)
+        scale_row.addStretch()
+        pos_label = QLabel("Tích cực +3")
+        pos_label.setObjectName("mutedText")
+        pos_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        scale_row.addWidget(pos_label)
+        sentiment_layout.addLayout(scale_row)
+
+        layout.addWidget(sentiment_frame)
+
         # ── Ghi chú ──────────────────────────────────────────────────
         notes_title = QLabel("Ghi Chú Reviewer")
         notes_title.setObjectName("sectionTitle")
@@ -748,6 +800,12 @@ class ReviewPage(QWidget):
         self.save_btn.setMinimumHeight(32)
         self.save_btn.clicked.connect(self._save_current_review)
         layout.addWidget(self.save_btn)
+
+        self.gemini_btn = QPushButton("🤖  Gemini Verify")
+        self.gemini_btn.setMinimumHeight(32)
+        self.gemini_btn.setToolTip("Gọi Gemini 2.5 Flash để verify/re-score clip hiện tại")
+        self.gemini_btn.clicked.connect(self._on_gemini_verify)
+        layout.addWidget(self.gemini_btn)
 
         layout.addStretch()
         scroll.setWidget(panel)
@@ -797,27 +855,34 @@ class ReviewPage(QWidget):
 
     def _clip_to_dict(self, clip) -> dict:
         display_name = f"Clip {clip.clip_index:03d}"
+        per_model = clip.per_model_scores or {}
+        gem_meta = per_model.get("gemini_prefilter", {})
+        segment_meta = per_model.get("segment", {})
         return {
-                        "id": clip.id,
-                        "video_id": clip.video_id,
+            "id": clip.id,
+            "video_id": clip.video_id,
             "clip_index": clip.clip_index,
             "display_name": display_name,
-                        "clip_path": clip.clip_path,
+            "clip_path": clip.clip_path,
             "start_time": clip.start_time or 0,
             "end_time": clip.end_time or 0,
             "duration": clip.duration or 0,
             "transcript": clip.transcript or "",
-                        "ai_emotion": clip.ai_emotion,
+            "ai_emotion": clip.ai_emotion,
             "ai_confidence": clip.ai_confidence or 0,
-                        "ai_agreement": clip.ai_agreement,
+            "ai_agreement": clip.ai_agreement,
             "quality_score": clip.quality_score or 0,
             "has_incongruity": bool(clip.has_incongruity),
             "user_emotion": clip.user_emotion,
+            "sentiment_score": clip.sentiment_score,
             "reviewer_notes": clip.reviewer_notes or "",
             "status": clip.status or "pending",
             "all_scores": clip.all_scores or {},
-            "per_model_scores": clip.per_model_scores or {},
+            "per_model_scores": per_model,
             "num_faces": clip.num_faces or 0,
+            "face_ratio": clip.face_ratio or gem_meta.get("face_coverage", segment_meta.get("face_coverage", 0)),
+            "speech_coverage": gem_meta.get("speech_coverage", segment_meta.get("speech_coverage", 0)),
+            "has_speech": clip.has_speech or False,
         }
 
     def _apply_filters(self):
@@ -898,9 +963,11 @@ class ReviewPage(QWidget):
             return
         self.clip_counter.setText(f"Clip {self._current_index + 1} / {len(self._clips)}")
         self.clip_title.setText(clip.get("display_name", "Clip"))
+        speech_indicator = "🔊" if clip.get("has_speech") else "🔇"
         self.clip_meta.setText(
             f"{clip.get('start_time', 0):.2f}s - {clip.get('end_time', 0):.2f}s | "
-            f"{clip.get('duration', 0):.1f}s | faces: {clip.get('num_faces', 0)}"
+            f"{clip.get('duration', 0):.1f}s | faces: {clip.get('num_faces', 0)} | "
+            f"{speech_indicator} speech"
         )
 
         path = clip.get("clip_path")
@@ -943,8 +1010,22 @@ class ReviewPage(QWidget):
         else:
                 btn.setStyleSheet("")
 
+        # Sentiment slider
+        sentiment = clip.get("sentiment_score")
+        if sentiment is None:
+            # Auto-map from emotion if no explicit score yet
+            from backend.database.models import SENTIMENT_MAPPING
+            effective_emotion = user_emotion or ai_emotion or "neutral"
+            sentiment = SENTIMENT_MAPPING.get(effective_emotion, 0.0)
+        self.sentiment_slider.blockSignals(True)
+        self.sentiment_slider.setValue(int(round(sentiment * 10)))
+        self.sentiment_slider.blockSignals(False)
+        self._update_sentiment_display(sentiment)
+
     def _update_segment_info(self, clip: dict):
-        segment = (clip.get("per_model_scores") or {}).get("segment") or {}
+        per_model = clip.get("per_model_scores") or {}
+        segment = per_model.get("segment") or {}
+        gem_meta = per_model.get("gemini_prefilter") or {}
         source_map = {
             "face_dialogue": "Mặt người + hội thoại",
             "face_only": "Theo mặt người",
@@ -956,16 +1037,19 @@ class ReviewPage(QWidget):
             "weak": "Yếu",
         }
         source = source_map.get(segment.get("source"), segment.get("source") or "-")
-        face_cov = segment.get("face_coverage")
-        speech_cov = segment.get("speech_coverage")
+        # Ưu tiên gemini_prefilter > segment metadata
+        face_cov = gem_meta.get("face_coverage") if gem_meta.get("face_coverage") is not None else segment.get("face_coverage")
+        speech_cov = gem_meta.get("speech_coverage") if gem_meta.get("speech_coverage") is not None else segment.get("speech_coverage")
         quality = quality_map.get(segment.get("quality_hint"), segment.get("quality_hint") or "-")
         avg_faces = segment.get("num_faces_avg")
+        has_speech = clip.get("has_speech", False)
+        speech_label = "Có lời thoại" if has_speech else "Không có lời thoại"
         self.segment_source_label.setText(f"Nguồn cắt: {source}")
         self.segment_face_label.setText(
             "Tỷ lệ có mặt: -" if face_cov is None else f"Tỷ lệ có mặt: {float(face_cov) * 100:.0f}% | Số mặt TB: {float(avg_faces or 0):.1f}"
         )
         self.segment_speech_label.setText(
-            "Tỷ lệ hội thoại: -" if speech_cov is None else f"Tỷ lệ hội thoại: {float(speech_cov) * 100:.0f}%"
+            f"Tỷ lệ hội thoại: {'-' if speech_cov is None else f'{float(speech_cov) * 100:.0f}%'} | {speech_label}"
         )
         self.segment_quality_label.setText(f"Đánh giá đoạn: {quality}")
 
@@ -1008,6 +1092,10 @@ class ReviewPage(QWidget):
         for btn in self._emotion_buttons.values():
             btn.setChecked(False)
             btn.setStyleSheet("")
+        self.sentiment_slider.blockSignals(True)
+        self.sentiment_slider.setValue(0)
+        self.sentiment_slider.blockSignals(False)
+        self.sentiment_value_label.setText("0.0")
         self.timeline_bar.clear()
 
     def _toggle_play(self):
@@ -1119,6 +1207,26 @@ class ReviewPage(QWidget):
 
     # Review actions -------------------------------------------------
 
+    def _on_sentiment_slider_changed(self, raw_value: int):
+        """Called when user drags the sentiment slider."""
+        score = raw_value / 10.0  # Convert back to [-3.0, +3.0]
+        self._update_sentiment_display(score)
+        if self._current_clip:
+            self._current_clip["sentiment_score"] = score
+
+    def _update_sentiment_display(self, score: float):
+        """Update the sentiment value label text and color."""
+        sign = "+" if score > 0 else ""
+        self.sentiment_value_label.setText(f"{sign}{score:.1f}")
+        # Color coding: green for positive, red for negative, gray for neutral
+        if score > 0.5:
+            color = "#00b894"  # green
+        elif score < -0.5:
+            color = "#e17055"  # red
+        else:
+            color = "#b8b6c4"  # gray/neutral
+        self.sentiment_value_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
+
     def _on_emotion_selected(self, emotion_key: str):
         if not self._current_clip:
             return
@@ -1134,6 +1242,16 @@ class ReviewPage(QWidget):
             else:
                 btn.setStyleSheet("")
 
+        # Auto-map sentiment when emotion changes
+        from backend.database.models import SENTIMENT_MAPPING
+        auto_score = SENTIMENT_MAPPING.get(emotion_key, 0.0)
+        self.sentiment_slider.blockSignals(True)
+        self.sentiment_slider.setValue(int(round(auto_score * 10)))
+        self.sentiment_slider.blockSignals(False)
+        self._update_sentiment_display(auto_score)
+        if self._current_clip:
+            self._current_clip["sentiment_score"] = auto_score
+
         # Update timeline bar display
         self.timeline_bar.update()
         self._save_current_review(show_message=False)
@@ -1144,6 +1262,11 @@ class ReviewPage(QWidget):
             return
         if not self._current_clip.get("user_emotion"):
             self._current_clip["user_emotion"] = self._current_clip.get("ai_emotion")
+        # Auto-populate sentiment_score if user hasn't set it explicitly
+        if self._current_clip.get("sentiment_score") is None:
+            from backend.database.models import SENTIMENT_MAPPING
+            emotion = self._current_clip.get("user_emotion") or self._current_clip.get("ai_emotion") or "neutral"
+            self._current_clip["sentiment_score"] = SENTIMENT_MAPPING.get(emotion, 0.0)
         self._update_status("approved")
         self._go_next()
 
@@ -1152,6 +1275,86 @@ class ReviewPage(QWidget):
             return
         self._update_status("rejected")
         self._go_next()
+
+    def _on_gemini_verify(self):
+        """Gọi Gemini để verify/re-score clip hiện tại."""
+        if not self._current_clip:
+            return
+
+        clip_path = self._current_clip.get("clip_path")
+        if not clip_path or not os.path.exists(clip_path):
+            QMessageBox.warning(
+                self, "Không tìm thấy clip",
+                f"Không tìm được file clip: {clip_path}"
+            )
+            return
+
+        self.gemini_btn.setEnabled(False)
+        self.gemini_btn.setText("🤖 Đang phân tích...")
+        QApplication.processEvents()
+
+        try:
+            from backend.services.gemini_auto_labeler import GeminiAutoLabeler
+            labeler = GeminiAutoLabeler()
+
+            configured, msg = labeler.is_configured()
+            if not configured:
+                QMessageBox.warning(
+                    self, "Chua cau hinh Gemini",
+                    f"Khong the goi Gemini:\n{msg}\n\n"
+                    "Chay: gcloud auth application-default login"
+                )
+                return
+
+            result = labeler.analyze_clip(clip_path=clip_path, intensity_threshold=0.5)
+            analysis = result.get("analysis", {})
+
+            if isinstance(analysis, dict):
+                emotion = analysis.get("emotion") or analysis.get("predicted_emotion")
+                intensity = analysis.get("intensity") or analysis.get("confidence", 0)
+                reasoning = analysis.get("reasoning", "")
+
+                # Cập nhật UI
+                self._current_clip["gem_confidence"] = intensity
+                self._current_clip["gem_emotion"] = emotion
+                self._current_clip["gem_reasoning"] = reasoning
+
+                # Highlight emotion button nếu khác với hiện tại
+                if emotion and emotion != self._current_clip.get("ai_emotion"):
+                    reply = QMessageBox.question(
+                        self, "Gemini đề xuất nhãn khác",
+                        f"Gemini gợi ý nhãn: **{emotion.upper()}** (confidence: {intensity:.0%})\n\n"
+                        f"Reasoning: {reasoning}\n\n"
+                        f"Có muốn áp dụng không?",
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        self._set_emotion(emotion)
+                        self._save_current_review()
+
+                # Hiển thị kết quả
+                QMessageBox.information(
+                    self, "Gemini Verify Hoàn Tất",
+                    f"Emotion: {emotion or 'N/A'}\n"
+                    f"Confidence: {intensity:.1%}\n"
+                    f"Cost: ${result.get('total_cost_usd', 0):.4f}\n\n"
+                    f"Reasoning: {reasoning[:200]}"
+                )
+            else:
+                QMessageBox.warning(self, "Kết quả không hợp lệ", str(analysis))
+
+        except ImportError as exc:
+            QMessageBox.critical(
+                self, "Thiếu thư viện",
+                f"google.genai chưa được cài hoặc Vertex AI credentials chưa được cấu hình:\n{exc}\n\n"
+                "Chạy: pip install google-genai\n"
+                "Hoặc: gcloud auth application-default login"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Lỗi Gemini", str(exc))
+        finally:
+            self.gemini_btn.setEnabled(True)
+            self.gemini_btn.setText("🤖  Gemini Verify")
 
     def _save_current_review(self, show_message: bool = True):
         if not self._current_clip:
@@ -1165,6 +1368,7 @@ class ReviewPage(QWidget):
                 clip = session.query(Clip).filter(Clip.id == self._current_clip["id"]).first()
                 if clip:
                     clip.user_emotion = self._current_clip.get("user_emotion")
+                    clip.sentiment_score = self._current_clip.get("sentiment_score")
                     clip.reviewer_notes = self.notes_text.toPlainText().strip()
                     clip.reviewed_at = datetime.utcnow()
                     session.commit()
@@ -1189,6 +1393,7 @@ class ReviewPage(QWidget):
                 if clip:
                     clip.status = new_status
                     clip.user_emotion = self._current_clip.get("user_emotion")
+                    clip.sentiment_score = self._current_clip.get("sentiment_score")
                     clip.reviewer_notes = self.notes_text.toPlainText().strip()
                     clip.reviewed_at = datetime.utcnow()
                     session.commit()

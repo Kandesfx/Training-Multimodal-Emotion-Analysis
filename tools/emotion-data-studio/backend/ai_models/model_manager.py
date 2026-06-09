@@ -141,17 +141,13 @@ class ModelManager:
         from facenet_pytorch import MTCNN
         return MTCNN(keep_all=True, device=self._device())
 
-    def _load_text_emotion(self):
-        from transformers import pipeline
-        model_name = os.getenv("EDS_TEXT_EMOTION_MODEL", "j-hartmann/emotion-english-distilroberta-base")
-        # Vietnamese text is translated nowhere here; this model is used only as
-        # a weak secondary signal. Services combine it with Vietnamese lexicon rules.
-        return pipeline("text-classification", model=model_name, top_k=None, device=0 if self._device() == "cuda" else -1)
-
     def _load_audio_emotion(self):
-        from transformers import pipeline
-        model_name = os.getenv("EDS_AUDIO_EMOTION_MODEL", "superb/wav2vec2-base-superb-er")
-        return pipeline("audio-classification", model=model_name, top_k=None, device=0 if self._device() == "cuda" else -1)
+        from backend.ai_models.audio_emotion_model import audio_emotion_classifier
+        return audio_emotion_classifier
+
+    def _load_text_emotion(self):
+        from backend.ai_models.text_emotion_model import text_emotion_classifier
+        return text_emotion_classifier
 
 
 model_manager = ModelManager()

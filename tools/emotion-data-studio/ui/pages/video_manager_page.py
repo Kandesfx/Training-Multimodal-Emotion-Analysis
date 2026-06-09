@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -29,10 +30,15 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -190,10 +196,10 @@ class VideoManagerPage(QWidget):
         card.setObjectName("cardElevated")
         layout = QHBoxLayout(card)
         layout.setSpacing(10)
-        self.set_active_btn = QPushButton("Set Active Video")
-        self.set_active_btn.setObjectName("primaryBtn")
-        self.set_active_btn.clicked.connect(self._set_selected_video_active)
-        layout.addWidget(self.set_active_btn)
+        self.import_urls_btn = QPushButton("Import URLs")
+        self.import_urls_btn.setObjectName("primaryBtn")
+        self.import_urls_btn.clicked.connect(self._open_import_dialog)
+        layout.addWidget(self.import_urls_btn)
         self.open_review_btn = QPushButton("Open Active in Review")
         self.open_review_btn.clicked.connect(self._open_active_review)
         layout.addWidget(self.open_review_btn)
@@ -513,6 +519,11 @@ class VideoManagerPage(QWidget):
         if self._active_video_id:
             self.open_review_requested.emit(self._active_video_id)
 
+    def _open_import_dialog(self):
+        dialog = ImportUrlsDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh_data()
+
     def _open_active_segment(self):
         video_id = self._selected_video_id() or self._active_video_id
         if not video_id or video_id not in self._videos:
@@ -718,3 +729,216 @@ class VideoManagerPage(QWidget):
     def _format_duration(ms: float) -> str:
         total = max(0, int(ms / 1000))
         return f"{total // 60:02d}:{total % 60:02d}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Batch URL Import Dialog
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ImportUrlsDialog(QDialog):
+    """Dialog for batch-importing video URLs into the EDS pipeline."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Import URLs — Batch Harvest")
+        self.setMinimumSize(640, 480)
+        self._setup_ui()
+        self._emotions = ["", "happy", "sad", "angry", "fear", "surprise", "disgust", "neutral"]
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        header = QLabel(
+            "Paste video/playlist/channel URLs (one per line). "
+            "Supported: YouTube video, playlist (/playlist?list=...), channel, "
+            "TikTok, Facebook, Drive, and direct video files."
+        )
+        header.setWordWrap(True)
+        header.setObjectName("mutedText")
+        layout.addWidget(header)
+
+        layout.addWidget(QLabel("URLs:"))
+        self.url_input = QPlainTextEdit()
+        self.url_input.setPlaceholderText(
+            "https://www.youtube.com/watch?v=...\n"
+            "https://www.youtube.com/playlist?list=...\n"
+            "https://www.youtube.com/@channel\n"
+            "https://www.tiktok.com/@user/video/...\n"
+            "https://drive.google.com/file/d/...\n"
+        )
+        layout.addWidget(self.url_input, stretch=1)
+
+        opts = QHBoxLayout()
+        opts.addWidget(QLabel("Target emotion:"))
+        self.emotion_combo = QComboBox()
+        self.emotion_combo.addItems(self._emotions)
+        opts.addWidget(self.emotion_combo)
+
+        opts.addWidget(QLabel("Priority:"))
+        self.priority_spin = QComboBox()
+        self.priority_spin.addItems(["0 — Normal", "1 — High", "2 — Critical"])
+        opts.addWidget(self.priority_spin)
+
+        self.auto_start_check = QCheckBox("Auto-start pipeline after import")
+        opts.addWidget(self.auto_start_check)
+        opts.addStretch()
+        layout.addLayout(opts)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("mutedText")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(self.cancel_btn)
+        self.import_btn = QPushButton("Import URLs")
+        self.import_btn.setObjectName("primaryBtn")
+        self.import_btn.clicked.connect(self._do_import)
+        btns.addWidget(self.import_btn)
+        layout.addLayout(btns)
+
+    def _detect_source_type(self, url: str) -> str:
+        host = urlparse(url).netloc.lower()
+        if "youtube" in host or "youtu.be" in host:
+            return "youtube"
+        if "drive.google" in host:
+            return "drive"
+        if "tiktok" in host:
+            return "tiktok"
+        if "facebook" in host or "fb.watch" in host:
+            return "facebook"
+        if "dailymotion" in host:
+            return "dailymotion"
+        return "url"
+
+    def _derive_title(self, url: str) -> str:
+        from urllib.parse import parse_qs, urlparse
+        try:
+            parsed = urlparse(url)
+            if "youtube" in parsed.netloc.lower():
+                qs = parse_qs(parsed.query)
+                if "v" in qs:
+                    return f"YouTube {qs['v'][0]}"
+                if "list" in qs:
+                    return f"Playlist {qs['list'][0]}"
+            return url.split("/")[-1][:60] or url
+        except Exception:
+            return url[:60]
+
+    def _do_import(self):
+        raw = self.url_input.toPlainText()
+        urls = [u.strip() for u in raw.splitlines() if u.strip()]
+        if not urls:
+            self.status_label.setText("No URLs provided.")
+            return
+
+        self.import_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(len(urls))
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Importing...")
+
+        emotion = self.emotion_combo.currentText() or None
+        priority = int(self.priority_spin.currentText().split("—")[0].strip())
+        auto_start = self.auto_start_check.isChecked()
+
+        from urllib.parse import urlparse as _urlparse
+
+        added = 0
+        skipped = 0
+        errors = []
+
+        try:
+            from backend.database.local_db import get_session
+            from backend.database.models import ProcessQueue, Video
+
+            session = get_session()
+            try:
+                for i, url in enumerate(urls):
+                    try:
+                        # Check duplicate by URL
+                        existing = session.query(Video).filter(
+                            Video.source_url == url
+                        ).first()
+                        if existing:
+                            skipped += 1
+                            self.progress_bar.setValue(i + 1)
+                            continue
+
+                        video = Video(
+                            title=self._derive_title(url),
+                            source_url=url,
+                            source_type=self._detect_source_type(url),
+                            status="queued",
+                            target_emotion=emotion,
+                        )
+                        session.add(video)
+                        session.flush()
+
+                        queue_item = ProcessQueue(
+                            video_id=video.id,
+                            priority=priority,
+                            target_emotion=emotion,
+                            status="queued",
+                        )
+                        session.add(queue_item)
+                        session.commit()
+                        added += 1
+                    except Exception as e:
+                        session.rollback()
+                        errors.append(f"  {url[:60]}: {e}")
+
+                    self.progress_bar.setValue(i + 1)
+
+                # Optionally auto-start first item
+                if auto_start and added > 0:
+                    from backend.services.pipeline_orchestrator import PipelineOrchestrator
+                    queue_item = (
+                        session.query(ProcessQueue)
+                        .filter(ProcessQueue.status == "queued")
+                        .order_by(ProcessQueue.priority.desc(), ProcessQueue.id.asc())
+                        .first()
+                    )
+                    if queue_item:
+                        queue_item.status = "running"
+                        session.commit()
+                        try:
+                            PipelineOrchestrator().run_pipeline(queue_item.video_id, session)
+                            queue_item.status = "done"
+                            session.commit()
+                        except Exception as e:
+                            queue_item.status = "error"
+                            queue_item.error_msg = str(e)[:500]
+                            session.commit()
+                            errors.append(f"  Pipeline error: {e}")
+
+            finally:
+                session.close()
+
+            parts = []
+            if added:
+                parts.append(f"Added {added} video(s)")
+            if skipped:
+                parts.append(f"skipped {skipped} duplicate(s)")
+            if errors:
+                parts.append(f"{len(errors)} error(s)")
+            self.status_label.setText("✅ " + ", ".join(parts))
+            if errors:
+                self.status_label.setToolTip("\n".join(errors[:10]))
+            self.progress_bar.setValue(len(urls))
+            self.import_btn.setText("Done — Close")
+            self.import_btn.setEnabled(True)
+        except Exception as exc:
+            self.status_label.setText(f"❌ Error: {exc}")
+            self.import_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(True)
+

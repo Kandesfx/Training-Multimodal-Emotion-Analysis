@@ -182,6 +182,7 @@ class ProcessingPage(QWidget):
         self.main_layout.addWidget(self.subtitle_label)
 
         self._build_preflight_card()
+        self._build_worker_status_card()
         self._build_overall_card()
         self._build_stage_card()
         self._build_controls()
@@ -195,6 +196,64 @@ class ProcessingPage(QWidget):
         self._resource_timer.timeout.connect(self._update_resources)
         self._resource_timer.start(3000)
         self._update_resources()
+
+    def _build_worker_status_card(self):
+        card = QFrame()
+        card.setObjectName("cardElevated")
+        layout = QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("GPU Workers (Colab)")
+        title.setObjectName("sectionTitle")
+        header.addWidget(title)
+        self.worker_status_label = QLabel("⏸ Chưa kết nối")
+        self.worker_status_label.setObjectName("mutedText")
+        header.addWidget(self.worker_status_label)
+        refresh_btn = QPushButton("⟳")
+        refresh_btn.setFixedSize(28, 28)
+        refresh_btn.clicked.connect(self._refresh_worker_status)
+        header.addWidget(refresh_btn)
+        layout.addLayout(header)
+
+        self.worker_info_label = QLabel("Không có worker nào kết nối")
+        self.worker_info_label.setWordWrap(True)
+        self.worker_info_label.setObjectName("mutedText")
+        layout.addWidget(self.worker_info_label)
+
+        self.main_layout.insertWidget(2, card)
+        self._worker_status_card = card
+
+        self._worker_poll_timer = QTimer(self)
+        self._worker_poll_timer.timeout.connect(self._refresh_worker_status)
+        self._worker_poll_timer.start(15000)
+
+    def _refresh_worker_status(self):
+        try:
+            import httpx
+            resp = httpx.get("http://127.0.0.1:8765/api/worker/status", timeout=5)
+            data = resp.json()
+            workers = data.get("workers", [])
+            queue = data.get("queue", {})
+
+            if workers:
+                w = workers[0]
+                self.worker_status_label.setText(f"✅ {w.get('gpu_name', 'GPU')}")
+                self.worker_info_label.setText(
+                    f"Worker: {w.get('worker_id', '?')} | "
+                    f"GPU: {w.get('gpu_name', '?')} ({w.get('gpu_memory_gb', 0):.0f}GB) | "
+                    f"Queue: {queue.get('queued', 0)} queued, {queue.get('running', 0)} running"
+                )
+                self._worker_poll_timer.start(15000)
+            else:
+                self.worker_status_label.setText("⏸ Idle")
+                self.worker_info_label.setText(
+                    f"Không có worker kết nối | "
+                    f"Queue: {queue.get('queued', 0)} queued, {queue.get('running', 0)} running"
+                )
+        except Exception:
+            self.worker_status_label.setText("⚠️ Backend offline")
+            self.worker_info_label.setText("Local backend không chạy. Chạy: python backend/main.py")
 
     def _build_preflight_card(self):
         card = QFrame()

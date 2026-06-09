@@ -27,7 +27,7 @@ def init_database():
     Sau đó chạy các schema migration nếu cần.
     Gọi khi khởi động ứng dụng (cả desktop và server).
     """
-    from backend.database.models import Video, Clip, Label, SyncLog  # noqa: F401
+    from backend.database.models import Video, Clip, Label, SyncLog, Feature, ProcessQueue  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _run_migrations(engine)
 
@@ -57,9 +57,43 @@ def _run_migrations(engine):
     # Danh sách migration: (version, description, sql_statements)
     # Thêm migration mới vào cuối danh sách khi schema thay đổi
     migrations = [
-        # (1, "Add language column to clips", [
-        #     "ALTER TABLE clips ADD COLUMN language TEXT"
-        # ]),
+        (1, "Add sentiment_score column to clips for MMSA training", [
+            "ALTER TABLE clips ADD COLUMN sentiment_score REAL"
+        ]),
+        (2, "Add Colab EDS video and clip metadata", [
+            "ALTER TABLE videos ADD COLUMN source_type TEXT DEFAULT 'local'",
+            "ALTER TABLE videos ADD COLUMN error_msg TEXT",
+            "ALTER TABLE videos ADD COLUMN num_clips_raw INTEGER DEFAULT 0",
+            "ALTER TABLE videos ADD COLUMN num_clips_ok INTEGER DEFAULT 0",
+            "ALTER TABLE videos ADD COLUMN target_emotion TEXT",
+            "ALTER TABLE clips ADD COLUMN face_ratio REAL",
+            "ALTER TABLE clips ADD COLUMN frontal_ratio REAL",
+            "ALTER TABLE clips ADD COLUMN avg_yaw REAL",
+            "ALTER TABLE clips ADD COLUMN avg_face_size REAL",
+            "ALTER TABLE clips ADD COLUMN face_quality REAL",
+            "ALTER TABLE clips ADD COLUMN transcript_conf REAL",
+            "ALTER TABLE clips ADD COLUMN audio_path TEXT",
+            "ALTER TABLE clips ADD COLUMN snr_db REAL",
+            "ALTER TABLE clips ADD COLUMN num_speakers INTEGER",
+            "ALTER TABLE clips ADD COLUMN has_speech BOOLEAN DEFAULT 0",
+            "ALTER TABLE clips ADD COLUMN emotion_face TEXT",
+            "ALTER TABLE clips ADD COLUMN emotion_face_conf REAL",
+            "ALTER TABLE clips ADD COLUMN emotion_voice TEXT",
+            "ALTER TABLE clips ADD COLUMN emotion_voice_conf REAL",
+            "ALTER TABLE clips ADD COLUMN emotion_text TEXT",
+            "ALTER TABLE clips ADD COLUMN emotion_text_conf REAL",
+            "ALTER TABLE clips ADD COLUMN decision_by TEXT",
+            "ALTER TABLE clips ADD COLUMN reject_reason TEXT",
+            "ALTER TABLE clips ADD COLUMN pipeline_stage TEXT"
+        ]),
+        (3, "Create Colab EDS queue, features and indexes", [
+            "CREATE TABLE IF NOT EXISTS features (clip_id TEXT PRIMARY KEY REFERENCES clips(id), text_path TEXT, audio_path TEXT, vision_path TEXT, text_shape TEXT, audio_shape TEXT, vision_shape TEXT, aligned BOOLEAN DEFAULT 0, split TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS process_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, video_id TEXT REFERENCES videos(id), priority INTEGER DEFAULT 0, target_emotion TEXT, status TEXT DEFAULT 'queued', started_at TIMESTAMP, completed_at TIMESTAMP, error_msg TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE INDEX IF NOT EXISTS idx_clips_status ON clips(status)",
+            "CREATE INDEX IF NOT EXISTS idx_clips_emotion ON clips(predicted_emotion)",
+            "CREATE INDEX IF NOT EXISTS idx_clips_video ON clips(video_id)",
+            "CREATE INDEX IF NOT EXISTS idx_queue_status ON process_queue(status, priority DESC)"
+        ]),
     ]
 
     with engine.begin() as conn:
